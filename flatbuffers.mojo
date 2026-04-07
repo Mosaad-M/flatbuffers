@@ -192,3 +192,165 @@ fn read_f64_le(buf: List[UInt8], pos: Int) raises -> Float64:
 fn padding_to(pos: Int, alignment: Int) -> Int:
     """Return bytes needed to align `pos` up to the next `alignment` boundary."""
     return (alignment - (pos % alignment)) % alignment
+
+
+# ============================================================================
+# FlatBufferBuilder
+#
+# Writes data back-to-front (prepend model): _head decrements on each write.
+# The valid buffer content lives at _buf[_head:].
+# finish(root) prepends the 4-byte root UOffset and returns a copy of _buf[_head:].
+#
+# Usage:
+#   var b = FlatBufferBuilder()
+#   var s = b.create_string("hello")
+#   b.start_table(1)
+#   b.add_field_offset(0, s)
+#   var root = b.end_table()
+#   var out = b.finish(root)
+# ============================================================================
+
+
+struct FlatBufferBuilder(Movable):
+    var _buf: List[UInt8]    # backing store; valid data at _buf[_head:]
+    var _head: Int           # write cursor; decrements on each prepend
+    var _min_align: Int      # max alignment seen — used to pad finish()
+
+    fn __init__(out self, initial_capacity: Int = 256):
+        self._buf = List[UInt8](capacity=initial_capacity)
+        for _ in range(initial_capacity):
+            self._buf.append(UInt8(0))
+        self._head = initial_capacity
+        self._min_align = 1
+
+    fn __moveinit__(out self, deinit take: Self):
+        self._buf = take._buf^
+        self._head = take._head
+        self._min_align = take._min_align
+
+    # ------------------------------------------------------------------
+    # Internal: grow the buffer by doubling, shifting written bytes to end
+    # ------------------------------------------------------------------
+
+    fn _grow(mut self):
+        var old_size = len(self._buf)
+        var new_size = old_size * 2
+        var written = old_size - self._head
+        # Build new buffer filled with zeros
+        var new_buf = List[UInt8](capacity=new_size)
+        for _ in range(new_size):
+            new_buf.append(UInt8(0))
+        # Copy existing written bytes to the end of new buffer
+        var new_head = new_size - written
+        for i in range(written):
+            new_buf[new_head + i] = self._buf[self._head + i]
+        self._buf = new_buf^
+        self._head = new_head
+
+    # ------------------------------------------------------------------
+    # Internal: ensure at least `needed` bytes of headroom, then align
+    # _head down to `align` boundary.
+    # ------------------------------------------------------------------
+
+    fn _prep(mut self, align: Int, needed: Int = 0):
+        if align > self._min_align:
+            self._min_align = align
+        # Grow until there is room for `needed` bytes plus alignment padding
+        while self._head < needed + align:
+            self._grow()
+        # Pad with zeros up to the alignment boundary
+        var pad = padding_to(len(self._buf) - self._head + needed, align)
+        for _ in range(pad):
+            self._head -= 1
+            self._buf[self._head] = UInt8(0)
+
+    # ------------------------------------------------------------------
+    # Current offset (distance from tail): the UOffset of the last prepended
+    # object. Stable even after _grow since both len and _head move together.
+    # ------------------------------------------------------------------
+
+    fn offset(self) -> UInt32:
+        return UInt32(len(self._buf) - self._head)
+
+    # ------------------------------------------------------------------
+    # Low-level prepend — each method calls _prep for alignment then writes
+    # ------------------------------------------------------------------
+
+    fn prepend_u8(mut self, val: UInt8):
+        self._prep(1, 1)
+        self._head -= 1
+        self._buf[self._head] = val
+
+    fn prepend_bool(mut self, val: Bool):
+        self.prepend_u8(UInt8(1) if val else UInt8(0))
+
+    fn prepend_u16(mut self, val: UInt16):
+        self._prep(2, 2)
+        self._head -= 2
+        write_u16_le(self._buf, self._head, val)
+
+    fn prepend_i16(mut self, val: Int16):
+        self._prep(2, 2)
+        self._head -= 2
+        # Extract bytes via Int32 arithmetic
+        var v = Int32(val)
+        self._buf[self._head]     = UInt8(Int32(v & Int32(0xFF)))
+        self._buf[self._head + 1] = UInt8(Int32((v >> 8) & Int32(0xFF)))
+
+    fn prepend_u32(mut self, val: UInt32):
+        self._prep(4, 4)
+        self._head -= 4
+        write_u32_le(self._buf, self._head, val)
+
+    fn prepend_i32(mut self, val: Int32):
+        self._prep(4, 4)
+        self._head -= 4
+        write_i32_le(self._buf, self._head, val)
+
+    fn prepend_u64(mut self, val: UInt64):
+        self._prep(8, 8)
+        self._head -= 8
+        write_u64_le(self._buf, self._head, val)
+
+    fn prepend_i64(mut self, val: Int64):
+        self._prep(8, 8)
+        self._head -= 8
+        write_i64_le(self._buf, self._head, val)
+
+    fn prepend_f32(mut self, val: Float32):
+        self._prep(4, 4)
+        self._head -= 4
+        write_f32_le(self._buf, self._head, val)
+
+    fn prepend_f64(mut self, val: Float64):
+        self._prep(8, 8)
+        self._head -= 8
+        write_f64_le(self._buf, self._head, val)
+
+    # ------------------------------------------------------------------
+    # String creation
+    # FlatBuffers string layout (written right-to-left via prepend):
+    #   [null byte][utf8 bytes in reverse][u32 length]
+    # When read forward in the final buffer:
+    #   [u32 length][utf8 bytes][null byte]
+    # ------------------------------------------------------------------
+
+    fn create_string(mut self, s: String) raises -> UInt32:
+        var bytes = s.as_bytes()
+        var n = len(bytes)
+        # _prep(4, n+1): add alignment padding so that after writing n+1 bytes
+        # (content + null), the next write (4-byte length) will be 4-byte aligned.
+        # The padding goes at the lowest address — before the length in forward view.
+        # We do NOT call _prep inside the individual byte writes that follow.
+        self._prep(4, n + 1)
+        # Prepend null terminator (ends up at highest address = after string bytes)
+        self._head -= 1
+        self._buf[self._head] = UInt8(0)
+        # Prepend UTF-8 bytes in reverse order (no per-byte _prep — space is reserved)
+        for i in range(n - 1, -1, -1):
+            self._head -= 1
+            self._buf[self._head] = bytes[i]
+        # Prepend 4-byte length (4-byte aligned due to _prep above)
+        self._head -= 4
+        write_u32_le(self._buf, self._head, UInt32(n))
+        return self.offset()

@@ -4,6 +4,7 @@ from flatbuffers import (
     read_u8, read_u16_le, read_u32_le, read_i32_le,
     read_i64_le, read_u64_le, read_f32_le, read_f64_le,
     padding_to,
+    FlatBufferBuilder,
 )
 
 
@@ -199,6 +200,129 @@ fn test_read_out_of_bounds_raises() raises:
 
 
 # ============================================================================
+# Phase 2 tests — FlatBufferBuilder scalars and strings
+# ============================================================================
+
+
+fn test_builder_initial_state() raises:
+    var b = FlatBufferBuilder(256)
+    assert_eq_int(len(b._buf), 256, "buf size")
+    assert_eq_int(b._head, 256, "head at end")
+    assert_eq_u32(b.offset(), UInt32(0), "offset is 0")
+
+
+fn test_prepend_u8_single() raises:
+    var b = FlatBufferBuilder(256)
+    b.prepend_u8(UInt8(0x55))
+    assert_eq_u32(b.offset(), UInt32(1), "offset after u8")
+    assert_eq_u8(b._buf[b._head], UInt8(0x55), "value at head")
+
+
+fn test_prepend_u32_alignment() raises:
+    var b = FlatBufferBuilder(256)
+    # Prepend a u8 first to misalign, then prepend u32 — should insert 3 padding bytes
+    b.prepend_u8(UInt8(0x01))
+    _ = b._head
+    b.prepend_u32(UInt32(0xDEADBEEF))
+    # u32 needs 4-byte alignment: from tail side, (written+needed) % 4 == 0
+    # The u32 itself is 4 bytes; head should be 4-byte aligned in the buffer
+    assert_eq_int(b._head % 4, 0, "head aligned to 4")
+    # Value at head must be correct LE encoding
+    assert_eq_u8(b._buf[b._head],     UInt8(0xEF), "byte0")
+    assert_eq_u8(b._buf[b._head + 1], UInt8(0xBE), "byte1")
+    assert_eq_u8(b._buf[b._head + 2], UInt8(0xAD), "byte2")
+    assert_eq_u8(b._buf[b._head + 3], UInt8(0xDE), "byte3")
+
+
+fn test_prepend_scalars_layout() raises:
+    var b = FlatBufferBuilder(256)
+    b.prepend_u8(UInt8(0xAA))
+    b.prepend_u16(UInt16(0x1234))
+    b.prepend_u32(UInt32(0x89ABCDEF))
+    # Read back via read helpers using the finalized sub-buffer
+    var head = b._head
+    var buf = b._buf.copy()
+    # u32 is lowest (prepended last so at head)
+    assert_eq_u8(buf[head],     UInt8(0xEF), "u32 b0")
+    assert_eq_u8(buf[head + 1], UInt8(0xCD), "u32 b1")
+    assert_eq_u8(buf[head + 2], UInt8(0xAB), "u32 b2")
+    assert_eq_u8(buf[head + 3], UInt8(0x89), "u32 b3")
+
+
+fn test_builder_grow_on_overflow() raises:
+    var b = FlatBufferBuilder(64)
+    # Prepend 300 u8 bytes to force multiple grows
+    for i in range(300):
+        b.prepend_u8(UInt8(i % 256))
+    assert_eq_u32(b.offset(), UInt32(300), "offset after 300 bytes")
+    # Verify a few values: the last prepended (i=299) is at head
+    assert_eq_u8(b._buf[b._head], UInt8(299 % 256), "last prepended at head")
+    # First prepended (i=0) is at tail-1
+    assert_eq_u8(b._buf[len(b._buf) - 1], UInt8(0), "first prepended at tail")
+
+
+fn _buf_at_offset(b: FlatBufferBuilder, off: UInt32) -> Int:
+    # Convert a UOffset (distance from tail) to absolute buf index
+    return len(b._buf) - Int(off)
+
+
+fn test_create_string_hello() raises:
+    var b = FlatBufferBuilder(256)
+    var off = b.create_string("hello")
+    # UOffset points to start of string object = length field
+    var abs_pos = _buf_at_offset(b, off)
+    # length field = 5
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos])
+        | (UInt32(b._buf[abs_pos + 1]) << 8)
+        | (UInt32(b._buf[abs_pos + 2]) << 16)
+        | (UInt32(b._buf[abs_pos + 3]) << 24),
+        UInt32(5), "length")
+    # bytes h,e,l,l,o
+    assert_eq_u8(b._buf[abs_pos + 4], UInt8(ord("h")), "h")
+    assert_eq_u8(b._buf[abs_pos + 5], UInt8(ord("e")), "e")
+    assert_eq_u8(b._buf[abs_pos + 6], UInt8(ord("l")), "l1")
+    assert_eq_u8(b._buf[abs_pos + 7], UInt8(ord("l")), "l2")
+    assert_eq_u8(b._buf[abs_pos + 8], UInt8(ord("o")), "o")
+    # null terminator
+    assert_eq_u8(b._buf[abs_pos + 9], UInt8(0), "null")
+
+
+fn test_create_string_empty() raises:
+    var b = FlatBufferBuilder(256)
+    var off = b.create_string("")
+    var abs_pos = _buf_at_offset(b, off)
+    # length = 0
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos])
+        | (UInt32(b._buf[abs_pos + 1]) << 8)
+        | (UInt32(b._buf[abs_pos + 2]) << 16)
+        | (UInt32(b._buf[abs_pos + 3]) << 24),
+        UInt32(0), "empty length")
+    # null terminator immediately after length
+    assert_eq_u8(b._buf[abs_pos + 4], UInt8(0), "null after empty")
+
+
+fn test_create_string_unicode() raises:
+    # "café" = 'c','a','f','é' where é = 0xC3 0xA9 (UTF-8, 2 bytes)
+    var b = FlatBufferBuilder(256)
+    var off = b.create_string("café")
+    var abs_pos = _buf_at_offset(b, off)
+    # UTF-8 byte count: c(1) + a(1) + f(1) + é(2) = 5
+    var length = (UInt32(b._buf[abs_pos])
+        | (UInt32(b._buf[abs_pos + 1]) << 8)
+        | (UInt32(b._buf[abs_pos + 2]) << 16)
+        | (UInt32(b._buf[abs_pos + 3]) << 24))
+    assert_eq_u32(length, UInt32(5), "byte length of café")
+    assert_eq_u8(b._buf[abs_pos + 4], UInt8(ord("c")), "c")
+    assert_eq_u8(b._buf[abs_pos + 5], UInt8(ord("a")), "a")
+    assert_eq_u8(b._buf[abs_pos + 6], UInt8(ord("f")), "f")
+    assert_eq_u8(b._buf[abs_pos + 7], UInt8(0xC3), "é high byte")
+    assert_eq_u8(b._buf[abs_pos + 8], UInt8(0xA9), "é low byte")
+    assert_eq_u8(b._buf[abs_pos + 9], UInt8(0), "null")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -233,6 +357,16 @@ fn main() raises:
     run_test("test_padding_to_already_aligned", passed, failed, test_padding_to_already_aligned)
     run_test("test_padding_to_needs_padding", passed, failed, test_padding_to_needs_padding)
     run_test("test_read_out_of_bounds_raises", passed, failed, test_read_out_of_bounds_raises)
+
+    # Phase 2
+    run_test("test_builder_initial_state", passed, failed, test_builder_initial_state)
+    run_test("test_prepend_u8_single", passed, failed, test_prepend_u8_single)
+    run_test("test_prepend_u32_alignment", passed, failed, test_prepend_u32_alignment)
+    run_test("test_prepend_scalars_layout", passed, failed, test_prepend_scalars_layout)
+    run_test("test_builder_grow_on_overflow", passed, failed, test_builder_grow_on_overflow)
+    run_test("test_create_string_hello", passed, failed, test_create_string_hello)
+    run_test("test_create_string_empty", passed, failed, test_create_string_empty)
+    run_test("test_create_string_unicode", passed, failed, test_create_string_unicode)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
