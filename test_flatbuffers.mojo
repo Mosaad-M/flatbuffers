@@ -4,7 +4,7 @@ from flatbuffers import (
     read_u8, read_u16_le, read_u32_le, read_i32_le,
     read_i64_le, read_u64_le, read_f32_le, read_f64_le,
     padding_to,
-    FieldLoc, FlatBufferBuilder,
+    FieldLoc, FlatBufferBuilder, FlatBuffersReader,
 )
 
 
@@ -532,6 +532,149 @@ fn test_nested_table() raises:
 
 
 # ============================================================================
+# Phase 4 tests — FlatBuffersReader scalars and strings
+# ============================================================================
+
+
+fn test_reader_root_offset() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(7))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var root = r.root()
+    # root must be a valid position past the 4-byte header and within the buffer
+    assert_true(Int(root) >= 4, "root >= 4")
+    assert_true(Int(root) < len(r._buf), "root < len(buf)")
+
+
+fn test_reader_vtable_resolution() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(5))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vt_pos = r._vtable_pos(tp)
+    # vtable must be before the table in the buffer (lower index)
+    assert_true(vt_pos >= 0, "vtable >= 0")
+    assert_true(vt_pos < Int(tp), "vtable before table")
+    # vtable_size at vt_pos must be at least 6 (header + 1 slot)
+    var vt_size = Int(UInt16(r._buf[vt_pos]) | (UInt16(r._buf[vt_pos + 1]) << 8))
+    assert_true(vt_size >= 6, "vtable_size >= 6")
+
+
+fn test_reader_scalar_i32() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(1234))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_eq_i32(r.read_i32(tp, 0), Int32(1234), "i32 roundtrip")
+
+
+fn test_reader_scalar_f64() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_f64(0, Float64(3.141592653589793))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var val = r.read_f64(tp, 0)
+    # exact IEEE 754 roundtrip for a stored-then-read value
+    assert_true(val == Float64(3.141592653589793), "f64 roundtrip")
+
+
+fn test_reader_scalar_bool_true() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_bool(0, True)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_true(r.read_bool(tp, 0), "bool True roundtrip")
+
+
+fn test_reader_scalar_bool_false() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_bool(0, False)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_true(not r.read_bool(tp, 0), "bool False roundtrip")
+
+
+fn test_reader_absent_field_returns_default() raises:
+    # Build a table with only slot 0; slot 1 and 2 are absent
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(42))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    # slot 0 present
+    assert_eq_i32(r.read_i32(tp, 0), Int32(42), "slot 0 present")
+    # slot 1 absent — should return default
+    assert_eq_i32(r.read_i32(tp, 1, Int32(-99)), Int32(-99), "slot 1 default")
+    # slot 2 absent — default 0
+    assert_eq_i32(r.read_i32(tp, 2), Int32(0), "slot 2 zero default")
+
+
+fn test_reader_string_field() raises:
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("flatbuffers")
+    b.start_table()
+    b.add_field_offset(0, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var s = r.read_string(tp, 0)
+    assert_true(s == "flatbuffers", "string roundtrip: " + s)
+
+
+fn test_reader_string_unicode() raises:
+    # "日本語" = 3 CJK characters, 9 bytes in UTF-8
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("日本語")
+    b.start_table()
+    b.add_field_offset(0, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var s = r.read_string(tp, 0)
+    assert_true(s == "日本語", "unicode string roundtrip: " + s)
+
+
+fn test_reader_multi_field_table() raises:
+    # Table with slot 0=i32(42), slot 1=f32(1.5), slot 2=string("hello")
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("hello")
+    b.start_table()
+    b.add_field_i32(0, Int32(42))
+    b.add_field_f32(1, Float32(1.5))
+    b.add_field_offset(2, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_eq_i32(r.read_i32(tp, 0), Int32(42), "i32 field")
+    assert_true(r.read_f32(tp, 1) == Float32(1.5), "f32 field")
+    var s = r.read_string(tp, 2)
+    assert_true(s == "hello", "string field: " + s)
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -588,6 +731,18 @@ fn main() raises:
     run_test("test_finish_root_offset", passed, failed, test_finish_root_offset)
     run_test("test_table_with_string_field", passed, failed, test_table_with_string_field)
     run_test("test_nested_table", passed, failed, test_nested_table)
+
+    # Phase 4
+    run_test("test_reader_root_offset", passed, failed, test_reader_root_offset)
+    run_test("test_reader_vtable_resolution", passed, failed, test_reader_vtable_resolution)
+    run_test("test_reader_scalar_i32", passed, failed, test_reader_scalar_i32)
+    run_test("test_reader_scalar_f64", passed, failed, test_reader_scalar_f64)
+    run_test("test_reader_scalar_bool_true", passed, failed, test_reader_scalar_bool_true)
+    run_test("test_reader_scalar_bool_false", passed, failed, test_reader_scalar_bool_false)
+    run_test("test_reader_absent_field_returns_default", passed, failed, test_reader_absent_field_returns_default)
+    run_test("test_reader_string_field", passed, failed, test_reader_string_field)
+    run_test("test_reader_string_unicode", passed, failed, test_reader_string_unicode)
+    run_test("test_reader_multi_field_table", passed, failed, test_reader_multi_field_table)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
