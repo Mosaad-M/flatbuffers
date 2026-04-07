@@ -431,7 +431,9 @@ struct FlatBufferBuilder(Movable):
     # Table building
     # ------------------------------------------------------------------
 
-    fn start_table(mut self):
+    fn start_table(mut self) raises:
+        if self._in_table:
+            raise Error("flatbuffers: start_table called while already building a table")
         # Pre-align to 4 bytes so that field writes inside the table have
         # consistent padding regardless of preceding buffer content.
         # This ensures same-schema tables produce identical vtable obj_size
@@ -445,7 +447,9 @@ struct FlatBufferBuilder(Movable):
         self._in_table    = True
         self._field_locs  = List[FieldLoc]()
 
-    fn _add_field(mut self, slot: Int):
+    fn _add_field(mut self, slot: Int) raises:
+        if not self._in_table:
+            raise Error("flatbuffers: add_field called outside start_table/end_table")
         self._field_locs.append(FieldLoc(slot, self.offset()))
 
     fn add_field_offset(mut self, slot: Int, val: UInt32) raises:

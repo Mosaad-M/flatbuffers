@@ -72,6 +72,18 @@ fn assert_raises(name: String) raises:
     raise Error("expected Error to be raised in: " + name)
 
 
+fn assert_f32_near(a: Float32, b: Float32, eps: Float32) raises:
+    var diff = a - b
+    if diff < -eps or diff > eps:
+        raise Error("f32 not near: " + String(a) + " vs " + String(b))
+
+
+fn assert_f64_near(a: Float64, b: Float64, eps: Float64) raises:
+    var diff = a - b
+    if diff < -eps or diff > eps:
+        raise Error("f64 not near: " + String(a) + " vs " + String(b))
+
+
 fn _make_buf(size: Int) -> List[UInt8]:
     var b = List[UInt8](capacity=size)
     for _ in range(size):
@@ -876,6 +888,173 @@ fn test_reader_vector_bounds_check() raises:
 
 
 # ============================================================================
+# Phase 6 tests — edge cases, growth stress, v1.0.0
+# ============================================================================
+
+
+fn test_missing_field_default_i32() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(1))
+    # slot 1 absent
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_eq_i32(r.read_i32(tp, 1, Int32(-42)), Int32(-42), "default -42")
+    assert_eq_i32(r.read_i32(tp, 1), Int32(0), "default 0")
+
+
+fn test_missing_field_default_f64() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(1))
+    # slot 1 absent
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_f64_near(r.read_f64(tp, 1, Float64(3.14)), Float64(3.14), Float64(1e-15))
+    assert_f64_near(r.read_f64(tp, 1), Float64(0.0), Float64(1e-15))
+
+
+fn test_missing_string_raises() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var raised = False
+    try:
+        _ = r.read_string(tp, 0)
+    except:
+        raised = True
+    assert_true(raised, "absent string slot must raise")
+
+
+fn test_missing_offset_raises() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var raised = False
+    try:
+        _ = r.read_offset(tp, 0)
+    except:
+        raised = True
+    assert_true(raised, "absent offset slot must raise")
+
+
+fn test_buffer_growth_boundary() raises:
+    # Builder with capacity 16; write exactly 16 bytes, then 1 more → growth
+    var b = FlatBufferBuilder(16)
+    for i in range(16):
+        b.prepend_u8(UInt8(i + 1))
+    # At this point _head == 0; one more byte forces growth
+    b.prepend_u8(UInt8(0xFF))
+    # Verify all 17 bytes are intact
+    assert_eq_u32(b.offset(), UInt32(17), "offset after 17 bytes")
+    assert_eq_u8(b._buf[b._head], UInt8(0xFF), "last byte correct")
+    assert_eq_u8(b._buf[len(b._buf) - 1], UInt8(1), "first byte correct")
+
+
+fn test_buffer_growth_50_strings() raises:
+    var b = FlatBufferBuilder()
+    var str_offs = List[UInt32]()
+    for i in range(50):
+        var off = b.create_string("s" + String(i))
+        str_offs.append(off)
+    var voff = b.create_vector_offsets(str_offs)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(50), "50 strings")
+    for i in range(50):
+        var s = r.vec_string(vec_pos, UInt32(i))
+        var expected = "s" + String(i)
+        assert_true(s == expected, "str" + String(i) + ": " + s)
+
+
+fn test_empty_string_roundtrip() raises:
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("")
+    b.start_table()
+    b.add_field_offset(0, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var s = r.read_string(tp, 0)
+    assert_true(s == "", "empty string: '" + s + "'")
+
+
+fn test_empty_vector_u32() raises:
+    var b = FlatBufferBuilder()
+    var voff = b.create_vector_u32(List[UInt32]())
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(0), "empty vec len=0")
+
+
+fn test_vtable_dedup_10_identical() raises:
+    var b = FlatBufferBuilder()
+    for i in range(10):
+        b.start_table()
+        b.add_field_i32(0, Int32(i))
+        _ = b.end_table()
+    # All 10 tables share one vtable schema → _vtables.size == 1
+    assert_eq_int(len(b._vtables), 1, "10 identical tables → 1 vtable")
+
+
+fn test_full_composite_roundtrip() raises:
+    var b = FlatBufferBuilder()
+    # Inner nested table
+    b.start_table()
+    b.add_field_i32(0, Int32(42))
+    var inner = b.end_table()
+    # String
+    var soff = b.create_string("composite")
+    # u32 vector [1, 2, 3]
+    var data = List[UInt32]()
+    data.append(UInt32(1))
+    data.append(UInt32(2))
+    data.append(UInt32(3))
+    var voff = b.create_vector_u32(data)
+    # Outer table: slot 0=i32, slot 1=string, slot 2=vec, slot 3=nested
+    b.start_table()
+    b.add_field_i32(0, Int32(99))
+    b.add_field_offset(1, soff)
+    b.add_field_offset(2, voff)
+    b.add_field_offset(3, inner)
+    var outer = b.end_table()
+    var buf = b.finish(outer)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_eq_i32(r.read_i32(tp, 0), Int32(99), "i32")
+    var s = r.read_string(tp, 1)
+    assert_true(s == "composite", "string: " + s)
+    var vec_pos = r.read_vector(tp, 2)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(3), "vec len")
+    assert_eq_u32(r.vec_u32(vec_pos, UInt32(0)), UInt32(1), "vec[0]")
+    assert_eq_u32(r.vec_u32(vec_pos, UInt32(1)), UInt32(2), "vec[1]")
+    assert_eq_u32(r.vec_u32(vec_pos, UInt32(2)), UInt32(3), "vec[2]")
+    var inner_tp = r.read_table(tp, 3)
+    assert_eq_i32(r.read_i32(inner_tp, 0), Int32(42), "nested i32")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -956,6 +1135,18 @@ fn main() raises:
     run_test("test_reader_union_present", passed, failed, test_reader_union_present)
     run_test("test_reader_union_type_zero", passed, failed, test_reader_union_type_zero)
     run_test("test_reader_vector_bounds_check", passed, failed, test_reader_vector_bounds_check)
+
+    # Phase 6
+    run_test("test_missing_field_default_i32", passed, failed, test_missing_field_default_i32)
+    run_test("test_missing_field_default_f64", passed, failed, test_missing_field_default_f64)
+    run_test("test_missing_string_raises", passed, failed, test_missing_string_raises)
+    run_test("test_missing_offset_raises", passed, failed, test_missing_offset_raises)
+    run_test("test_buffer_growth_boundary", passed, failed, test_buffer_growth_boundary)
+    run_test("test_buffer_growth_50_strings", passed, failed, test_buffer_growth_50_strings)
+    run_test("test_empty_string_roundtrip", passed, failed, test_empty_string_roundtrip)
+    run_test("test_empty_vector_u32", passed, failed, test_empty_vector_u32)
+    run_test("test_vtable_dedup_10_identical", passed, failed, test_vtable_dedup_10_identical)
+    run_test("test_full_composite_roundtrip", passed, failed, test_full_composite_roundtrip)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
