@@ -771,3 +771,83 @@ struct FlatBuffersReader(Movable):
             raise Error("flatbuffers: absent offset field at slot " + String(slot))
         var ref_pos = Int(tp) + Int(voff)
         return UInt32(ref_pos) + read_u32_le(self._buf, ref_pos)
+
+    # ------------------------------------------------------------------
+    # Phase 5: Vector accessors
+    # vec_pos = absolute position of the vector's length field (u32)
+    # Elements follow immediately: vec_pos+4, vec_pos+4+elem_size, ...
+    # ------------------------------------------------------------------
+
+    fn read_vector(self, tp: UInt32, slot: Int) raises -> UInt32:
+        """Return absolute position of the vector's length field."""
+        return self.read_offset(tp, slot)
+
+    fn vector_len(self, vec_pos: UInt32) raises -> UInt32:
+        return read_u32_le(self._buf, Int(vec_pos))
+
+    fn vec_u8(self, vec_pos: UInt32, i: UInt32) raises -> UInt8:
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
+        return read_u8(self._buf, Int(vec_pos) + 4 + Int(i))
+
+    fn vec_u32(self, vec_pos: UInt32, i: UInt32) raises -> UInt32:
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
+        return read_u32_le(self._buf, Int(vec_pos) + 4 + Int(i) * 4)
+
+    fn vec_i32(self, vec_pos: UInt32, i: UInt32) raises -> Int32:
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
+        return read_i32_le(self._buf, Int(vec_pos) + 4 + Int(i) * 4)
+
+    fn vec_f32(self, vec_pos: UInt32, i: UInt32) raises -> Float32:
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
+        return read_f32_le(self._buf, Int(vec_pos) + 4 + Int(i) * 4)
+
+    fn vec_f64(self, vec_pos: UInt32, i: UInt32) raises -> Float64:
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
+        return read_f64_le(self._buf, Int(vec_pos) + 4 + Int(i) * 8)
+
+    fn vec_offset(self, vec_pos: UInt32, i: UInt32) raises -> UInt32:
+        """Follow the UOffset at element i of an offset vector."""
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
+        var elem_pos = Int(vec_pos) + 4 + Int(i) * 4
+        return UInt32(elem_pos) + read_u32_le(self._buf, elem_pos)
+
+    fn read_string_at(self, str_pos: UInt32) raises -> String:
+        """Read a string directly from its absolute buffer position."""
+        var length = Int(read_u32_le(self._buf, Int(str_pos)))
+        if Int(str_pos) + 4 + length > len(self._buf):
+            raise Error("flatbuffers: string extends beyond buffer")
+        var bytes = List[UInt8](capacity=length)
+        for i in range(length):
+            bytes.append(self._buf[Int(str_pos) + 4 + i])
+        return String(unsafe_from_utf8=bytes^)
+
+    fn vec_string(self, vec_pos: UInt32, i: UInt32) raises -> String:
+        return self.read_string_at(self.vec_offset(vec_pos, i))
+
+    # Alias: tables are accessed the same way as any offset field
+    fn read_table(self, tp: UInt32, slot: Int) raises -> UInt32:
+        return self.read_offset(tp, slot)
+
+    # ------------------------------------------------------------------
+    # Phase 5: Union accessors
+    # Union stores two slots: type (u8) at type_slot, value (UOffset) at value_slot
+    # type=0 means NONE; union_table raises when value slot is absent
+    # ------------------------------------------------------------------
+
+    fn union_type(self, tp: UInt32, type_slot: Int) raises -> UInt8:
+        return self.read_u8(tp, type_slot)
+
+    fn union_table(self, tp: UInt32, value_slot: Int) raises -> UInt32:
+        return self.read_offset(tp, value_slot)

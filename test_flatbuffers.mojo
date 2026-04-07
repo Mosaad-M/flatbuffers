@@ -675,6 +675,207 @@ fn test_reader_multi_field_table() raises:
 
 
 # ============================================================================
+# Phase 5 tests — FlatBuffersReader vectors, nested tables, unions
+# ============================================================================
+
+
+fn test_reader_vector_u8() raises:
+    var b = FlatBufferBuilder()
+    var data = List[UInt8]()
+    data.append(UInt8(10))
+    data.append(UInt8(20))
+    data.append(UInt8(30))
+    var voff = b.create_vector_u8(data)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(3), "len")
+    assert_eq_u8(r.vec_u8(vec_pos, UInt32(0)), UInt8(10), "elem0")
+    assert_eq_u8(r.vec_u8(vec_pos, UInt32(1)), UInt8(20), "elem1")
+    assert_eq_u8(r.vec_u8(vec_pos, UInt32(2)), UInt8(30), "elem2")
+
+
+fn test_reader_vector_u32() raises:
+    var b = FlatBufferBuilder()
+    var data = List[UInt32]()
+    data.append(UInt32(100))
+    data.append(UInt32(200))
+    data.append(UInt32(300))
+    var voff = b.create_vector_u32(data)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(3), "len")
+    assert_eq_u32(r.vec_u32(vec_pos, UInt32(0)), UInt32(100), "elem0")
+    assert_eq_u32(r.vec_u32(vec_pos, UInt32(1)), UInt32(200), "elem1")
+    assert_eq_u32(r.vec_u32(vec_pos, UInt32(2)), UInt32(300), "elem2")
+
+
+fn test_reader_vector_length_zero() raises:
+    var b = FlatBufferBuilder()
+    var voff = b.create_vector_u8(List[UInt8]())
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(0), "empty len")
+
+
+fn test_reader_vector_of_strings() raises:
+    var b = FlatBufferBuilder()
+    var s1 = b.create_string("foo")
+    var s2 = b.create_string("bar")
+    var offsets = List[UInt32]()
+    offsets.append(s1)
+    offsets.append(s2)
+    var voff = b.create_vector_offsets(offsets)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(2), "len")
+    var str0 = r.vec_string(vec_pos, UInt32(0))
+    assert_true(str0 == "foo", "str0: " + str0)
+    var str1 = r.vec_string(vec_pos, UInt32(1))
+    assert_true(str1 == "bar", "str1: " + str1)
+
+
+fn test_reader_nested_table() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(99))
+    var inner = b.end_table()
+    b.start_table()
+    b.add_field_offset(0, inner)
+    var outer = b.end_table()
+    var buf = b.finish(outer)
+    var r = FlatBuffersReader(buf)
+    var outer_tp = r.root()
+    var inner_tp = r.read_table(outer_tp, 0)
+    assert_eq_i32(r.read_i32(inner_tp, 0), Int32(99), "nested i32")
+
+
+fn test_reader_deeply_nested() raises:
+    # A → B → C → i32=77
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(77))
+    var c = b.end_table()
+    b.start_table()
+    b.add_field_offset(0, c)
+    var bv = b.end_table()
+    b.start_table()
+    b.add_field_offset(0, bv)
+    var a = b.end_table()
+    var buf = b.finish(a)
+    var r = FlatBuffersReader(buf)
+    var a_tp = r.root()
+    var b_tp = r.read_table(a_tp, 0)
+    var c_tp = r.read_table(b_tp, 0)
+    assert_eq_i32(r.read_i32(c_tp, 0), Int32(77), "deep nested i32")
+
+
+fn test_reader_vector_of_tables() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(10))
+    var t1 = b.end_table()
+    b.start_table()
+    b.add_field_i32(0, Int32(20))
+    var t2 = b.end_table()
+    var offsets = List[UInt32]()
+    offsets.append(t1)
+    offsets.append(t2)
+    var voff = b.create_vector_offsets(offsets)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var root_toff = b.end_table()
+    var buf = b.finish(root_toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(2), "len")
+    var inner1 = r.vec_offset(vec_pos, UInt32(0))
+    assert_eq_i32(r.read_i32(inner1, 0), Int32(10), "table0 i32")
+    var inner2 = r.vec_offset(vec_pos, UInt32(1))
+    assert_eq_i32(r.read_i32(inner2, 0), Int32(20), "table1 i32")
+
+
+fn test_reader_union_present() raises:
+    # Union: type slot=2 (u8), value slot=3 (UOffset to inner table)
+    # Inner table has i32=55 at slot 0
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(55))
+    var inner = b.end_table()
+    b.start_table()
+    b.add_field_u8(2, UInt8(2))
+    b.add_field_offset(3, inner)
+    var outer = b.end_table()
+    var buf = b.finish(outer)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    assert_eq_u8(r.union_type(tp, 2), UInt8(2), "union type=2")
+    var union_tp = r.union_table(tp, 3)
+    assert_eq_i32(r.read_i32(union_tp, 0), Int32(55), "union table value")
+
+
+fn test_reader_union_type_zero() raises:
+    # No union set: type slot absent → type=0, value slot absent → union_table raises
+    var b = FlatBufferBuilder()
+    b.start_table()
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    # absent u8 field returns default 0
+    assert_eq_u8(r.union_type(tp, 2), UInt8(0), "absent type = 0")
+    var raised = False
+    try:
+        _ = r.union_table(tp, 3)
+    except:
+        raised = True
+    assert_true(raised, "union_table raises when absent")
+
+
+fn test_reader_vector_bounds_check() raises:
+    var b = FlatBufferBuilder()
+    var data = List[UInt8]()
+    data.append(UInt8(1))
+    data.append(UInt8(2))
+    data.append(UInt8(3))
+    var voff = b.create_vector_u8(data)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    # Index 5 in a len-3 vector must raise
+    var raised = False
+    try:
+        _ = r.vec_u8(vec_pos, UInt32(5))
+    except:
+        raised = True
+    assert_true(raised, "index 5 in len-3 vector should raise")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -743,6 +944,18 @@ fn main() raises:
     run_test("test_reader_string_field", passed, failed, test_reader_string_field)
     run_test("test_reader_string_unicode", passed, failed, test_reader_string_unicode)
     run_test("test_reader_multi_field_table", passed, failed, test_reader_multi_field_table)
+
+    # Phase 5
+    run_test("test_reader_vector_u8", passed, failed, test_reader_vector_u8)
+    run_test("test_reader_vector_u32", passed, failed, test_reader_vector_u32)
+    run_test("test_reader_vector_length_zero", passed, failed, test_reader_vector_length_zero)
+    run_test("test_reader_vector_of_strings", passed, failed, test_reader_vector_of_strings)
+    run_test("test_reader_nested_table", passed, failed, test_reader_nested_table)
+    run_test("test_reader_deeply_nested", passed, failed, test_reader_deeply_nested)
+    run_test("test_reader_vector_of_tables", passed, failed, test_reader_vector_of_tables)
+    run_test("test_reader_union_present", passed, failed, test_reader_union_present)
+    run_test("test_reader_union_type_zero", passed, failed, test_reader_union_type_zero)
+    run_test("test_reader_vector_bounds_check", passed, failed, test_reader_vector_bounds_check)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
