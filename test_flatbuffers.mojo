@@ -1,0 +1,239 @@
+from flatbuffers import (
+    write_u8, write_u16_le, write_u32_le, write_i32_le,
+    write_i64_le, write_u64_le, write_f32_le, write_f64_le,
+    read_u8, read_u16_le, read_u32_le, read_i32_le,
+    read_i64_le, read_u64_le, read_f32_le, read_f64_le,
+    padding_to,
+)
+
+
+# ============================================================================
+# Test helpers
+# ============================================================================
+
+
+fn assert_eq_u8(actual: UInt8, expected: UInt8, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected " + String(expected) + " got " + String(actual)
+        if len(msg) > 0:
+            m = msg + ": " + m
+        raise Error(m)
+
+
+fn assert_eq_u16(actual: UInt16, expected: UInt16, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected " + String(expected) + " got " + String(actual)
+        if len(msg) > 0:
+            m = msg + ": " + m
+        raise Error(m)
+
+
+fn assert_eq_u32(actual: UInt32, expected: UInt32, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected " + String(expected) + " got " + String(actual)
+        if len(msg) > 0:
+            m = msg + ": " + m
+        raise Error(m)
+
+
+fn assert_eq_i32(actual: Int32, expected: Int32, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected " + String(expected) + " got " + String(actual)
+        if len(msg) > 0:
+            m = msg + ": " + m
+        raise Error(m)
+
+
+fn assert_eq_u64(actual: UInt64, expected: UInt64, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected " + String(expected) + " got " + String(actual)
+        if len(msg) > 0:
+            m = msg + ": " + m
+        raise Error(m)
+
+
+fn assert_eq_int(actual: Int, expected: Int, msg: String = "") raises:
+    if actual != expected:
+        var m = "expected " + String(expected) + " got " + String(actual)
+        if len(msg) > 0:
+            m = msg + ": " + m
+        raise Error(m)
+
+
+fn assert_true(cond: Bool, msg: String = "") raises:
+    if not cond:
+        if len(msg) > 0:
+            raise Error(msg)
+        raise Error("expected True")
+
+
+fn assert_raises(name: String) raises:
+    raise Error("expected Error to be raised in: " + name)
+
+
+fn _make_buf(size: Int) -> List[UInt8]:
+    var b = List[UInt8](capacity=size)
+    for _ in range(size):
+        b.append(UInt8(0))
+    return b^
+
+
+# ============================================================================
+# Phase 1 tests — LE read/write primitives
+# ============================================================================
+
+
+fn test_write_read_u8_roundtrip() raises:
+    var buf = _make_buf(4)
+    write_u8(buf, 0, UInt8(0x42))
+    assert_eq_u8(read_u8(buf, 0), UInt8(0x42))
+    write_u8(buf, 3, UInt8(0xFF))
+    assert_eq_u8(read_u8(buf, 3), UInt8(0xFF))
+
+
+fn test_write_read_u16_le_byte_order() raises:
+    var buf = _make_buf(4)
+    write_u16_le(buf, 0, UInt16(0xABCD))
+    # little-endian: low byte first
+    assert_eq_u8(buf[0], UInt8(0xCD), "low byte")
+    assert_eq_u8(buf[1], UInt8(0xAB), "high byte")
+    assert_eq_u16(read_u16_le(buf, 0), UInt16(0xABCD), "roundtrip")
+
+
+fn test_write_read_u32_le_roundtrip() raises:
+    var buf = _make_buf(8)
+    write_u32_le(buf, 0, UInt32(0xDEADBEEF))
+    assert_eq_u8(buf[0], UInt8(0xEF), "byte0")
+    assert_eq_u8(buf[1], UInt8(0xBE), "byte1")
+    assert_eq_u8(buf[2], UInt8(0xAD), "byte2")
+    assert_eq_u8(buf[3], UInt8(0xDE), "byte3")
+    assert_eq_u32(read_u32_le(buf, 0), UInt32(0xDEADBEEF), "roundtrip")
+    # also test at non-zero offset
+    write_u32_le(buf, 4, UInt32(0x12345678))
+    assert_eq_u32(read_u32_le(buf, 4), UInt32(0x12345678), "offset 4")
+
+
+fn test_write_read_i32_le_negative() raises:
+    var buf = _make_buf(4)
+    write_i32_le(buf, 0, Int32(-1))
+    # -1 in two's complement = 0xFFFFFFFF
+    assert_eq_u8(buf[0], UInt8(0xFF))
+    assert_eq_u8(buf[1], UInt8(0xFF))
+    assert_eq_u8(buf[2], UInt8(0xFF))
+    assert_eq_u8(buf[3], UInt8(0xFF))
+    assert_eq_i32(read_i32_le(buf, 0), Int32(-1), "roundtrip")
+    write_i32_le(buf, 0, Int32(-2147483648))  # INT32_MIN
+    assert_eq_i32(read_i32_le(buf, 0), Int32(-2147483648), "INT32_MIN")
+
+
+fn test_write_read_u64_le_roundtrip() raises:
+    var buf = _make_buf(8)
+    var val = UInt64(0xCAFEBABEDEADBEEF)
+    write_u64_le(buf, 0, val)
+    assert_eq_u64(read_u64_le(buf, 0), val, "roundtrip")
+    # verify first byte is the least significant
+    assert_eq_u8(buf[0], UInt8(0xEF), "lowest byte")
+    assert_eq_u8(buf[7], UInt8(0xCA), "highest byte")
+
+
+fn test_write_read_f32_le_roundtrip() raises:
+    var buf = _make_buf(4)
+    var val = Float32(1.0)
+    write_f32_le(buf, 0, val)
+    var back = read_f32_le(buf, 0)
+    # exact bit equality for 1.0 (IEEE 754 representable exactly)
+    assert_true(back == val, "1.0 roundtrip")
+    write_f32_le(buf, 0, Float32(-3.14))
+    var back2 = read_f32_le(buf, 0)
+    assert_true(back2 == Float32(-3.14), "-3.14 roundtrip")
+
+
+fn test_write_read_f64_le_roundtrip() raises:
+    var buf = _make_buf(8)
+    var val = Float64(3.141592653589793)
+    write_f64_le(buf, 0, val)
+    var back = read_f64_le(buf, 0)
+    assert_true(back == val, "pi roundtrip")
+    write_f64_le(buf, 0, Float64(0.0))
+    assert_true(read_f64_le(buf, 0) == Float64(0.0), "zero roundtrip")
+
+
+fn test_padding_to_already_aligned() raises:
+    assert_eq_int(padding_to(8, 4), 0, "8 mod 4")
+    assert_eq_int(padding_to(0, 8), 0, "0 mod 8")
+    assert_eq_int(padding_to(16, 8), 0, "16 mod 8")
+    assert_eq_int(padding_to(4, 4), 0, "4 mod 4")
+
+
+fn test_padding_to_needs_padding() raises:
+    assert_eq_int(padding_to(5, 4), 3, "5→4")
+    assert_eq_int(padding_to(1, 8), 7, "1→8")
+    assert_eq_int(padding_to(3, 4), 1, "3→4")
+    assert_eq_int(padding_to(7, 8), 1, "7→8")
+    assert_eq_int(padding_to(1, 2), 1, "1→2")
+
+
+fn test_read_out_of_bounds_raises() raises:
+    var buf = _make_buf(3)
+    # read_u32_le needs 4 bytes; pos=0 needs bytes 0..3 but buf only has 3
+    var raised = False
+    try:
+        _ = read_u32_le(buf, 0)
+    except:
+        raised = True
+    assert_true(raised, "read_u32_le on 3-byte buf should raise")
+
+    var raised2 = False
+    try:
+        _ = read_u8(buf, 5)
+    except:
+        raised2 = True
+    assert_true(raised2, "read_u8 past end should raise")
+
+    var raised3 = False
+    try:
+        _ = read_u64_le(buf, 0)
+    except:
+        raised3 = True
+    assert_true(raised3, "read_u64_le on 3-byte buf should raise")
+
+
+# ============================================================================
+# Test runner
+# ============================================================================
+
+
+fn run_test(
+    name: String,
+    mut passed: Int,
+    mut failed: Int,
+    test_fn: fn () raises -> None,
+):
+    try:
+        test_fn()
+        passed += 1
+        print("  PASS:", name)
+    except e:
+        failed += 1
+        print("  FAIL:", name, "--", String(e))
+
+
+fn main() raises:
+    print("=== flatbuffers tests ===")
+    var passed = 0
+    var failed = 0
+
+    run_test("test_write_read_u8_roundtrip", passed, failed, test_write_read_u8_roundtrip)
+    run_test("test_write_read_u16_le_byte_order", passed, failed, test_write_read_u16_le_byte_order)
+    run_test("test_write_read_u32_le_roundtrip", passed, failed, test_write_read_u32_le_roundtrip)
+    run_test("test_write_read_i32_le_negative", passed, failed, test_write_read_i32_le_negative)
+    run_test("test_write_read_u64_le_roundtrip", passed, failed, test_write_read_u64_le_roundtrip)
+    run_test("test_write_read_f32_le_roundtrip", passed, failed, test_write_read_f32_le_roundtrip)
+    run_test("test_write_read_f64_le_roundtrip", passed, failed, test_write_read_f64_le_roundtrip)
+    run_test("test_padding_to_already_aligned", passed, failed, test_padding_to_already_aligned)
+    run_test("test_padding_to_needs_padding", passed, failed, test_padding_to_needs_padding)
+    run_test("test_read_out_of_bounds_raises", passed, failed, test_read_out_of_bounds_raises)
+
+    print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
+    if failed > 0:
+        raise Error(String(failed) + " test(s) failed")
