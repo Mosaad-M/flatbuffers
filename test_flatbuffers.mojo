@@ -4,7 +4,7 @@ from flatbuffers import (
     read_u8, read_u16_le, read_u32_le, read_i32_le,
     read_i64_le, read_u64_le, read_f32_le, read_f64_le,
     padding_to,
-    FlatBufferBuilder,
+    FieldLoc, FlatBufferBuilder,
 )
 
 
@@ -323,6 +323,215 @@ fn test_create_string_unicode() raises:
 
 
 # ============================================================================
+# Phase 3 tests — vectors, tables, finish
+# ============================================================================
+
+
+fn test_create_vector_u8_empty() raises:
+    var b = FlatBufferBuilder()
+    var off = b.create_vector_u8(List[UInt8]())
+    var abs_pos = _buf_at_offset(b, off)
+    # count = 0
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos])
+        | (UInt32(b._buf[abs_pos + 1]) << 8)
+        | (UInt32(b._buf[abs_pos + 2]) << 16)
+        | (UInt32(b._buf[abs_pos + 3]) << 24),
+        UInt32(0), "empty vector count")
+
+
+fn test_create_vector_u8_values() raises:
+    var b = FlatBufferBuilder()
+    var data = List[UInt8]()
+    data.append(UInt8(1))
+    data.append(UInt8(2))
+    data.append(UInt8(3))
+    var off = b.create_vector_u8(data)
+    var abs_pos = _buf_at_offset(b, off)
+    # count = 3
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos])
+        | (UInt32(b._buf[abs_pos + 1]) << 8)
+        | (UInt32(b._buf[abs_pos + 2]) << 16)
+        | (UInt32(b._buf[abs_pos + 3]) << 24),
+        UInt32(3), "count")
+    assert_eq_u8(b._buf[abs_pos + 4], UInt8(1), "elem0")
+    assert_eq_u8(b._buf[abs_pos + 5], UInt8(2), "elem1")
+    assert_eq_u8(b._buf[abs_pos + 6], UInt8(3), "elem2")
+
+
+fn test_create_vector_u32_alignment() raises:
+    var b = FlatBufferBuilder()
+    var data = List[UInt32]()
+    data.append(UInt32(0xDEAD))
+    data.append(UInt32(0xBEEF))
+    var off = b.create_vector_u32(data)
+    var abs_pos = _buf_at_offset(b, off)
+    # count = 2
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos])
+        | (UInt32(b._buf[abs_pos + 1]) << 8)
+        | (UInt32(b._buf[abs_pos + 2]) << 16)
+        | (UInt32(b._buf[abs_pos + 3]) << 24),
+        UInt32(2), "count")
+    # elem0 at abs_pos+4
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos + 4])
+        | (UInt32(b._buf[abs_pos + 5]) << 8)
+        | (UInt32(b._buf[abs_pos + 6]) << 16)
+        | (UInt32(b._buf[abs_pos + 7]) << 24),
+        UInt32(0xDEAD), "elem0")
+    assert_eq_u32(
+        UInt32(b._buf[abs_pos + 8])
+        | (UInt32(b._buf[abs_pos + 9]) << 8)
+        | (UInt32(b._buf[abs_pos + 10]) << 16)
+        | (UInt32(b._buf[abs_pos + 11]) << 24),
+        UInt32(0xBEEF), "elem1")
+
+
+fn test_start_end_table_empty() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    var toff = b.end_table()
+    # Table was created — toff should be nonzero
+    assert_true(Int(toff) > 0, "table offset > 0")
+    # vtable should have been recorded
+    assert_eq_int(len(b._vtables), 1, "one vtable recorded")
+
+
+fn test_table_one_i32_field() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(42))
+    var toff = b.end_table()
+    # Follow soffset from table to vtable
+    var table_abs = len(b._buf) - Int(toff)
+    var soffset = (Int32(b._buf[table_abs])
+        | (Int32(b._buf[table_abs + 1]) << 8)
+        | (Int32(b._buf[table_abs + 2]) << 16)
+        | (Int32(b._buf[table_abs + 3]) << 24))
+    var vtable_abs = table_abs + Int(soffset)
+    assert_true(vtable_abs >= 0, "vtable at valid position")
+    # vtable slot 0 should be nonzero (field is present)
+    var slot0 = UInt16(b._buf[vtable_abs + 4]) | (UInt16(b._buf[vtable_abs + 5]) << 8)
+    assert_true(Int(slot0) > 0, "slot 0 nonzero")
+
+
+fn test_table_field_absent() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(99))
+    # slot 1 intentionally skipped
+    var toff = b.end_table()
+    var table_abs = len(b._buf) - Int(toff)
+    var soffset = (Int32(b._buf[table_abs])
+        | (Int32(b._buf[table_abs + 1]) << 8)
+        | (Int32(b._buf[table_abs + 2]) << 16)
+        | (Int32(b._buf[table_abs + 3]) << 24))
+    var vtable_abs = table_abs + Int(soffset)
+    var vtable_size = UInt16(b._buf[vtable_abs]) | (UInt16(b._buf[vtable_abs + 1]) << 8)
+    # vtable has 1 slot (only slot 0 was added): 4 + 2*1 = 6 bytes
+    assert_eq_u16(vtable_size, UInt16(6), "vtable size")
+    var slot0 = UInt16(b._buf[vtable_abs + 4]) | (UInt16(b._buf[vtable_abs + 5]) << 8)
+    assert_true(Int(slot0) > 0, "slot 0 present")
+    # slot 1 is absent: slot_byte=6 >= vtable_size=6, reader returns 0 (default)
+    # vtable correctly has no entry for slot 1 — this is standard FlatBuffers behavior
+
+
+fn test_vtable_deduplication() raises:
+    var b = FlatBufferBuilder()
+    # Build first table
+    b.start_table()
+    b.add_field_i32(0, Int32(1))
+    var t1 = b.end_table()
+    var vtables_after_first = len(b._vtables)
+    # Build second identical-schema table
+    b.start_table()
+    b.add_field_i32(0, Int32(2))
+    var t2 = b.end_table()
+    # vtable count must NOT have increased (dedup)
+    assert_eq_int(len(b._vtables), vtables_after_first, "vtable dedup")
+    # Both table offsets must be different
+    assert_true(t1 != t2, "different table offsets")
+
+
+fn test_finish_root_offset() raises:
+    var b = FlatBufferBuilder()
+    b.start_table()
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # bytes 0..3 = root UOffset (position of root table in result buffer)
+    var root = Int(UInt32(buf[0])
+        | (UInt32(buf[1]) << 8)
+        | (UInt32(buf[2]) << 16)
+        | (UInt32(buf[3]) << 24))
+    # root must be a valid index into buf, past the 4-byte header
+    assert_true(root > 0 and root < len(buf), "root within buffer")
+    # soffset at root must point to a valid vtable position
+    var soff = Int32(buf[root]) | (Int32(buf[root+1]) << 8) | (Int32(buf[root+2]) << 16) | (Int32(buf[root+3]) << 24)
+    var vt_abs = root + Int(soff)
+    assert_true(vt_abs >= 0 and vt_abs < len(buf), "vtable within buffer")
+    # vtable_size at vtable must be >= 4 (minimum: just the 4-byte header)
+    var vt_size = Int(UInt16(buf[vt_abs]) | (UInt16(buf[vt_abs + 1]) << 8))
+    assert_true(vt_size >= 4, "vtable header present")
+
+
+fn test_table_with_string_field() raises:
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("mojo")
+    b.start_table()
+    b.add_field_offset(0, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # Verify: root → table → follow offset field → string length = 4
+    var root = Int(UInt32(buf[0]) | (UInt32(buf[1]) << 8) | (UInt32(buf[2]) << 16) | (UInt32(buf[3]) << 24))
+    # soffset at root
+    var so = Int32(buf[root]) | (Int32(buf[root + 1]) << 8) | (Int32(buf[root + 2]) << 16) | (Int32(buf[root + 3]) << 24)
+    var vt_abs = root + Int(so)
+    # slot 0 voffset
+    var slot0 = Int(UInt16(buf[vt_abs + 4]) | (UInt16(buf[vt_abs + 5]) << 8))
+    assert_true(slot0 > 0, "slot0 present")
+    # field ref position
+    var ref_pos = root + slot0
+    var str_rel = Int(UInt32(buf[ref_pos]) | (UInt32(buf[ref_pos + 1]) << 8) | (UInt32(buf[ref_pos + 2]) << 16) | (UInt32(buf[ref_pos + 3]) << 24))
+    var str_pos = ref_pos + str_rel
+    var str_len = Int(UInt32(buf[str_pos]) | (UInt32(buf[str_pos + 1]) << 8) | (UInt32(buf[str_pos + 2]) << 16) | (UInt32(buf[str_pos + 3]) << 24))
+    assert_eq_int(str_len, 4, "string length")
+    assert_eq_u8(buf[str_pos + 4], UInt8(ord("m")), "m")
+    assert_eq_u8(buf[str_pos + 5], UInt8(ord("o")), "o")
+    assert_eq_u8(buf[str_pos + 6], UInt8(ord("j")), "j")
+    assert_eq_u8(buf[str_pos + 7], UInt8(ord("o")), "o2")
+
+
+fn test_nested_table() raises:
+    # Inner table: one i32 field (value=99)
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(99))
+    var inner = b.end_table()
+    # Outer table: one offset field pointing to inner
+    b.start_table()
+    b.add_field_offset(0, inner)
+    var outer = b.end_table()
+    var buf = b.finish(outer)
+    # Navigate: root → outer table → inner table → field = 99
+    var root = Int(UInt32(buf[0]) | (UInt32(buf[1]) << 8) | (UInt32(buf[2]) << 16) | (UInt32(buf[3]) << 24))
+    var so = Int32(buf[root]) | (Int32(buf[root+1]) << 8) | (Int32(buf[root+2]) << 16) | (Int32(buf[root+3]) << 24)
+    var vt = root + Int(so)
+    var slot0 = Int(UInt16(buf[vt + 4]) | (UInt16(buf[vt + 5]) << 8))
+    var ref_pos = root + slot0
+    var inner_rel = Int(UInt32(buf[ref_pos]) | (UInt32(buf[ref_pos+1]) << 8) | (UInt32(buf[ref_pos+2]) << 16) | (UInt32(buf[ref_pos+3]) << 24))
+    var inner_abs = ref_pos + inner_rel
+    # Now read inner table field 0
+    var iso = Int32(buf[inner_abs]) | (Int32(buf[inner_abs+1]) << 8) | (Int32(buf[inner_abs+2]) << 16) | (Int32(buf[inner_abs+3]) << 24)
+    var ivt = inner_abs + Int(iso)
+    var islot0 = Int(UInt16(buf[ivt + 4]) | (UInt16(buf[ivt + 5]) << 8))
+    var ival_pos = inner_abs + islot0
+    var ival = Int32(buf[ival_pos]) | (Int32(buf[ival_pos+1]) << 8) | (Int32(buf[ival_pos+2]) << 16) | (Int32(buf[ival_pos+3]) << 24)
+    assert_eq_i32(ival, Int32(99), "inner field value")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -367,6 +576,18 @@ fn main() raises:
     run_test("test_create_string_hello", passed, failed, test_create_string_hello)
     run_test("test_create_string_empty", passed, failed, test_create_string_empty)
     run_test("test_create_string_unicode", passed, failed, test_create_string_unicode)
+
+    # Phase 3
+    run_test("test_create_vector_u8_empty", passed, failed, test_create_vector_u8_empty)
+    run_test("test_create_vector_u8_values", passed, failed, test_create_vector_u8_values)
+    run_test("test_create_vector_u32_alignment", passed, failed, test_create_vector_u32_alignment)
+    run_test("test_start_end_table_empty", passed, failed, test_start_end_table_empty)
+    run_test("test_table_one_i32_field", passed, failed, test_table_one_i32_field)
+    run_test("test_table_field_absent", passed, failed, test_table_field_absent)
+    run_test("test_vtable_deduplication", passed, failed, test_vtable_deduplication)
+    run_test("test_finish_root_offset", passed, failed, test_finish_root_offset)
+    run_test("test_table_with_string_field", passed, failed, test_table_with_string_field)
+    run_test("test_nested_table", passed, failed, test_nested_table)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
