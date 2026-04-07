@@ -614,3 +614,160 @@ struct FlatBufferBuilder(Movable):
         for i in range(self._head, len(self._buf)):
             result.append(self._buf[i])
         return result^
+
+
+# ============================================================================
+# FlatBuffersReader
+#
+# Reads a finished FlatBuffers buffer.  All table positions (`tp`) are
+# absolute byte offsets in the buffer (not tail-distances).
+#
+# The root UOffset stored at bytes [0..3] is an absolute table position.
+# ============================================================================
+
+
+struct FlatBuffersReader(Movable):
+    var _buf: List[UInt8]
+
+    fn __init__(out self, buf: List[UInt8]):
+        self._buf = buf.copy()
+
+    fn __moveinit__(out self, deinit take: Self):
+        self._buf = take._buf^
+
+    # ------------------------------------------------------------------
+    # Root: position 0 holds the root UOffset (absolute table position)
+    # ------------------------------------------------------------------
+
+    fn root(self) raises -> UInt32:
+        return read_u32_le(self._buf, 0)
+
+    # ------------------------------------------------------------------
+    # Internal: vtable position for a given table
+    # soffset at tp is negative; vtable_pos = tp + soffset < tp
+    # ------------------------------------------------------------------
+
+    fn _vtable_pos(self, table_pos: UInt32) raises -> Int:
+        var soffset = read_i32_le(self._buf, Int(table_pos))
+        var vt_pos = Int(table_pos) + Int(soffset)
+        if vt_pos < 0 or vt_pos >= len(self._buf):
+            raise Error("flatbuffers: vtable position out of bounds: " + String(vt_pos))
+        return vt_pos
+
+    # ------------------------------------------------------------------
+    # Internal: VOffset for `slot` in the table at `table_pos`
+    # Returns 0 if slot is absent (vtable too small or slot not set)
+    # ------------------------------------------------------------------
+
+    fn _field_voffset(self, table_pos: UInt32, slot: Int) raises -> UInt16:
+        var vt = self._vtable_pos(table_pos)
+        var vt_size = Int(read_u16_le(self._buf, vt))
+        var slot_byte = 4 + slot * 2
+        if slot_byte + 1 >= vt_size:
+            return UInt16(0)
+        return read_u16_le(self._buf, vt + slot_byte)
+
+    # ------------------------------------------------------------------
+    # Scalar readers — return default when field absent
+    # ------------------------------------------------------------------
+
+    fn read_i8(self, tp: UInt32, slot: Int, default: Int8 = 0) raises -> Int8:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        var u = read_u8(self._buf, Int(tp) + Int(voff))
+        var tmp = alloc[UInt8](1)
+        tmp[] = u
+        var result = tmp.bitcast[Int8]()[]
+        tmp.free()
+        return result
+
+    fn read_u8(self, tp: UInt32, slot: Int, default: UInt8 = 0) raises -> UInt8:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_u8(self._buf, Int(tp) + Int(voff))
+
+    fn read_i16(self, tp: UInt32, slot: Int, default: Int16 = 0) raises -> Int16:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        var u = read_u16_le(self._buf, Int(tp) + Int(voff))
+        var tmp = alloc[UInt16](1)
+        tmp[] = u
+        var result = tmp.bitcast[Int16]()[]
+        tmp.free()
+        return result
+
+    fn read_u16(self, tp: UInt32, slot: Int, default: UInt16 = 0) raises -> UInt16:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_u16_le(self._buf, Int(tp) + Int(voff))
+
+    fn read_i32(self, tp: UInt32, slot: Int, default: Int32 = 0) raises -> Int32:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_i32_le(self._buf, Int(tp) + Int(voff))
+
+    fn read_u32(self, tp: UInt32, slot: Int, default: UInt32 = 0) raises -> UInt32:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_u32_le(self._buf, Int(tp) + Int(voff))
+
+    fn read_i64(self, tp: UInt32, slot: Int, default: Int64 = 0) raises -> Int64:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_i64_le(self._buf, Int(tp) + Int(voff))
+
+    fn read_f32(self, tp: UInt32, slot: Int, default: Float32 = 0.0) raises -> Float32:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_f32_le(self._buf, Int(tp) + Int(voff))
+
+    fn read_f64(self, tp: UInt32, slot: Int, default: Float64 = 0.0) raises -> Float64:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_f64_le(self._buf, Int(tp) + Int(voff))
+
+    fn read_bool(self, tp: UInt32, slot: Int, default: Bool = False) raises -> Bool:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            return default
+        return read_u8(self._buf, Int(tp) + Int(voff)) != UInt8(0)
+
+    # ------------------------------------------------------------------
+    # String reader — raises if field absent
+    # Layout at str_pos: [length:u32][utf8 bytes][null byte]
+    # ------------------------------------------------------------------
+
+    fn read_string(self, tp: UInt32, slot: Int) raises -> String:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            raise Error("flatbuffers: absent string field at slot " + String(slot))
+        var ref_pos = Int(tp) + Int(voff)
+        var str_pos = ref_pos + Int(read_u32_le(self._buf, ref_pos))
+        var length = Int(read_u32_le(self._buf, str_pos))
+        if str_pos + 4 + length > len(self._buf):
+            raise Error("flatbuffers: string extends beyond buffer")
+        var bytes = List[UInt8](capacity=length)
+        for i in range(length):
+            bytes.append(self._buf[str_pos + 4 + i])
+        return String(unsafe_from_utf8=bytes^)
+
+    # ------------------------------------------------------------------
+    # Offset reader — raises if field absent; returns absolute position
+    # of the referenced object (follows the UOffset stored in the field)
+    # ------------------------------------------------------------------
+
+    fn read_offset(self, tp: UInt32, slot: Int) raises -> UInt32:
+        var voff = self._field_voffset(tp, slot)
+        if voff == 0:
+            raise Error("flatbuffers: absent offset field at slot " + String(slot))
+        var ref_pos = Int(tp) + Int(voff)
+        return UInt32(ref_pos) + read_u32_le(self._buf, ref_pos)
