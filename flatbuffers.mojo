@@ -253,16 +253,24 @@ struct FlatBufferBuilder(Movable):
     # Internal: grow buffer by doubling, shift written bytes to end
     # ------------------------------------------------------------------
 
-    fn _grow(mut self):
+    fn _grow(mut self) raises:
         var old_size = len(self._buf)
+        # Guard: doubling a buffer over half of Int max would overflow.
+        # In practice this is ~4.6 EB; treat as a programming error.
+        if old_size > 0x3FFF_FFFF_FFFF_FFFF:
+            raise Error("flatbuffers: builder buffer too large to grow")
         var new_size = old_size * 2
         var written  = old_size - self._head
+        # Single forward-append pass: prefix zeros then copy of written bytes.
+        # Forward sequential writes have better cache behaviour than the old
+        # approach of zero-filling new_size bytes then writing backwards
+        # into the middle via random-access subscript.
         var new_buf  = List[UInt8](capacity=new_size)
-        for _ in range(new_size):
-            new_buf.append(UInt8(0))
         var new_head = new_size - written
+        for _ in range(new_head):
+            new_buf.append(UInt8(0))
         for i in range(written):
-            new_buf[new_head + i] = self._buf[self._head + i]
+            new_buf.append(self._buf[self._head + i])
         self._buf  = new_buf^
         self._head = new_head
 
@@ -272,7 +280,7 @@ struct FlatBufferBuilder(Movable):
     # padding bytes go at lowest addresses (before the object in forward view).
     # ------------------------------------------------------------------
 
-    fn _prep(mut self, align: Int, needed: Int = 0):
+    fn _prep(mut self, align: Int, needed: Int = 0) raises:
         if align > self._min_align:
             self._min_align = align
         while self._head < needed + align:
@@ -294,52 +302,52 @@ struct FlatBufferBuilder(Movable):
     # Low-level prepend methods
     # ------------------------------------------------------------------
 
-    fn prepend_u8(mut self, val: UInt8):
+    fn prepend_u8(mut self, val: UInt8) raises:
         self._prep(1, 1)
         self._head -= 1
         self._buf[self._head] = val
 
-    fn prepend_bool(mut self, val: Bool):
+    fn prepend_bool(mut self, val: Bool) raises:
         self.prepend_u8(UInt8(1) if val else UInt8(0))
 
-    fn prepend_u16(mut self, val: UInt16):
+    fn prepend_u16(mut self, val: UInt16) raises:
         self._prep(2, 2)
         self._head -= 2
         write_u16_le(self._buf, self._head, val)
 
-    fn prepend_i16(mut self, val: Int16):
+    fn prepend_i16(mut self, val: Int16) raises:
         self._prep(2, 2)
         self._head -= 2
         var v = Int32(val)
         self._buf[self._head]     = UInt8(Int32(v & Int32(0xFF)))
         self._buf[self._head + 1] = UInt8(Int32((v >> 8) & Int32(0xFF)))
 
-    fn prepend_u32(mut self, val: UInt32):
+    fn prepend_u32(mut self, val: UInt32) raises:
         self._prep(4, 4)
         self._head -= 4
         write_u32_le(self._buf, self._head, val)
 
-    fn prepend_i32(mut self, val: Int32):
+    fn prepend_i32(mut self, val: Int32) raises:
         self._prep(4, 4)
         self._head -= 4
         write_i32_le(self._buf, self._head, val)
 
-    fn prepend_u64(mut self, val: UInt64):
+    fn prepend_u64(mut self, val: UInt64) raises:
         self._prep(8, 8)
         self._head -= 8
         write_u64_le(self._buf, self._head, val)
 
-    fn prepend_i64(mut self, val: Int64):
+    fn prepend_i64(mut self, val: Int64) raises:
         self._prep(8, 8)
         self._head -= 8
         write_i64_le(self._buf, self._head, val)
 
-    fn prepend_f32(mut self, val: Float32):
+    fn prepend_f32(mut self, val: Float32) raises:
         self._prep(4, 4)
         self._head -= 4
         write_f32_le(self._buf, self._head, val)
 
-    fn prepend_f64(mut self, val: Float64):
+    fn prepend_f64(mut self, val: Float64) raises:
         self._prep(8, 8)
         self._head -= 8
         write_f64_le(self._buf, self._head, val)
@@ -368,7 +376,7 @@ struct FlatBufferBuilder(Movable):
     # Vectors of offsets must prepend in REVERSE order (last element first).
     # ------------------------------------------------------------------
 
-    fn create_vector_u8(mut self, data: List[UInt8]) -> UInt32:
+    fn create_vector_u8(mut self, data: List[UInt8]) raises -> UInt32:
         var n = len(data)
         self._prep(4, n)
         for i in range(n - 1, -1, -1):
@@ -378,7 +386,7 @@ struct FlatBufferBuilder(Movable):
         write_u32_le(self._buf, self._head, UInt32(n))
         return self.offset()
 
-    fn create_vector_u32(mut self, data: List[UInt32]) -> UInt32:
+    fn create_vector_u32(mut self, data: List[UInt32]) raises -> UInt32:
         var n = len(data)
         self._prep(4, n * 4)
         for i in range(n - 1, -1, -1):
@@ -388,7 +396,7 @@ struct FlatBufferBuilder(Movable):
         write_u32_le(self._buf, self._head, UInt32(n))
         return self.offset()
 
-    fn create_vector_i32(mut self, data: List[Int32]) -> UInt32:
+    fn create_vector_i32(mut self, data: List[Int32]) raises -> UInt32:
         var n = len(data)
         self._prep(4, n * 4)
         for i in range(n - 1, -1, -1):
@@ -398,7 +406,7 @@ struct FlatBufferBuilder(Movable):
         write_u32_le(self._buf, self._head, UInt32(n))
         return self.offset()
 
-    fn create_vector_offsets(mut self, offsets: List[UInt32]) -> UInt32:
+    fn create_vector_offsets(mut self, offsets: List[UInt32]) raises -> UInt32:
         # UOffset elements must be written in REVERSE order so that when read
         # forward the first element comes first.
         var n = len(offsets)
@@ -667,7 +675,12 @@ struct FlatBuffersReader(Movable):
         var vt = self._vtable_pos(table_pos)
         var vt_size = Int(read_u16_le(self._buf, vt))
         var slot_byte = 4 + slot * 2
+        # Check 1: slot is within the vtable's declared size.
         if slot_byte + 1 >= vt_size:
+            return UInt16(0)
+        # Check 2 (defense-in-depth): vtable slot bytes must be within the buffer.
+        # A malicious vt_size could pass check 1 while vt+slot_byte is past len(_buf).
+        if vt + slot_byte + 1 >= len(self._buf):
             return UInt16(0)
         return read_u16_le(self._buf, vt + slot_byte)
 

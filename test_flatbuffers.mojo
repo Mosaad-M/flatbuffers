@@ -1055,6 +1055,242 @@ fn test_full_composite_roundtrip() raises:
 
 
 # ============================================================================
+# Security: adversarial / malicious buffer tests
+# ============================================================================
+
+
+fn test_adversarial_all_zeros() raises:
+    # 64-byte all-zero buffer: root=0, vtable_size=0 → all fields absent.
+    # Scalar reads must return defaults; string/offset reads must raise.
+    var buf = List[UInt8]()
+    for _ in range(64):
+        buf.append(UInt8(0))
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()  # root=0 (valid pos in 64-byte buf)
+    assert_eq_i32(r.read_i32(tp, 0, Int32(-1)), Int32(-1), "default from zeros buf")
+    var raised = False
+    try:
+        _ = r.read_string(tp, 0)
+    except:
+        raised = True
+    assert_true(raised, "absent string raises on zeros buf")
+
+
+fn test_adversarial_all_0xff() raises:
+    # 64-byte 0xFF buffer: root = 0xFFFFFFFF which is far past the buffer end.
+    # _vtable_pos must raise when trying to read soffset at that position.
+    var buf = List[UInt8]()
+    for _ in range(64):
+        buf.append(UInt8(0xFF))
+    var r = FlatBuffersReader(buf)
+    var raised = False
+    try:
+        _ = r.root()  # returns 0xFFFFFFFF
+        var tp = UInt32(0xFFFFFFFF)
+        _ = r._vtable_pos(tp)  # tries read_i32_le at pos 0xFFFFFFFF → raises
+    except:
+        raised = True
+    assert_true(raised, "0xFF buf: vtable read past end must raise")
+
+
+fn test_adversarial_truncated_buffer() raises:
+    # 3-byte buffer: not even enough for the root UOffset (needs 4 bytes).
+    var buf = List[UInt8]()
+    buf.append(UInt8(0x00))
+    buf.append(UInt8(0x00))
+    buf.append(UInt8(0x00))
+    var r = FlatBuffersReader(buf)
+    var raised = False
+    try:
+        _ = r.root()
+    except:
+        raised = True
+    assert_true(raised, "3-byte buf: root() must raise")
+
+
+fn test_adversarial_root_past_end() raises:
+    # 8-byte buffer where root UOffset = 100 (past the 8-byte buffer end).
+    # Reading the soffset for that table position must raise.
+    var buf = List[UInt8]()
+    buf.append(UInt8(100))  # root = 100 LE
+    buf.append(UInt8(0))
+    buf.append(UInt8(0))
+    buf.append(UInt8(0))
+    for _ in range(4):
+        buf.append(UInt8(0))
+    var r = FlatBuffersReader(buf)
+    var raised = False
+    try:
+        var tp = r.root()           # = 100
+        _ = r._vtable_pos(tp)       # read_i32_le at pos 100, len=8 → raises
+    except:
+        raised = True
+    assert_true(raised, "root past end: vtable read must raise")
+
+
+fn test_adversarial_negative_vtable_pos() raises:
+    # Craft soffset = -100 so vtable_pos = table_pos + soffset < 0 → raises.
+    # Buffer: [root_lo,0,0,0, soff_lo,soff_hi,soff_hi,soff_hi, ...]
+    # root = 4 (table at byte 4), soffset = -100 → vtable at 4-100 = -96.
+    var buf = List[UInt8]()
+    # bytes 0-3: root = 4
+    buf.append(UInt8(4))
+    buf.append(UInt8(0))
+    buf.append(UInt8(0))
+    buf.append(UInt8(0))
+    # bytes 4-7: soffset = -100 in LE two's-complement (0xFFFFFF9C)
+    buf.append(UInt8(0x9C))
+    buf.append(UInt8(0xFF))
+    buf.append(UInt8(0xFF))
+    buf.append(UInt8(0xFF))
+    for _ in range(8):
+        buf.append(UInt8(0))
+    var r = FlatBuffersReader(buf)
+    var raised = False
+    try:
+        var tp = r.root()          # = 4
+        _ = r._vtable_pos(tp)      # vt_pos = 4 + (-100) = -96 < 0 → raises
+    except:
+        raised = True
+    assert_true(raised, "negative vtable_pos must raise")
+
+
+fn test_adversarial_string_length_oob() raises:
+    # Build a real buffer with a short string, then corrupt the string length
+    # field to 0xFFFFFFFF so it claims far more bytes than the buffer holds.
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("hi")
+    b.start_table()
+    b.add_field_offset(0, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # Navigate to the string length field and corrupt it
+    var r0 = FlatBuffersReader(buf)
+    var tp0 = r0.root()
+    var voff = r0._field_voffset(tp0, 0)
+    var ref_pos = Int(tp0) + Int(voff)
+    var rel = Int(read_u32_le(buf, ref_pos))
+    var str_pos = ref_pos + rel
+    # Overwrite length with 0xFFFFFFFF
+    write_u32_le(buf, str_pos, UInt32(0xFFFFFFFF))
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var raised = False
+    try:
+        _ = r.read_string(tp, 0)
+    except:
+        raised = True
+    assert_true(raised, "string length oob must raise")
+
+
+fn test_adversarial_vector_count_huge() raises:
+    # Build a real vector, corrupt the count field to 0xFFFFFFFF, then try
+    # to access element 0. read_u8 bounds check must catch the OOB access.
+    var b = FlatBufferBuilder()
+    var data = List[UInt8]()
+    data.append(UInt8(1))
+    data.append(UInt8(2))
+    var voff = b.create_vector_u8(data)
+    b.start_table()
+    b.add_field_offset(0, voff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # Find vector position and corrupt count
+    var r0 = FlatBuffersReader(buf)
+    var tp0 = r0.root()
+    var vec_pos = r0.read_vector(tp0, 0)
+    write_u32_le(buf, Int(vec_pos), UInt32(0xFFFFFFFF))
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vp = r.read_vector(tp, 0)
+    # Element 2 (past the real 2 elements) is within the buffer bytes,
+    # but element at a large index must fail bounds check.
+    var raised = False
+    try:
+        _ = r.vec_u8(vp, UInt32(100))  # 100 < 0xFFFFFFFF (passes vlen check)
+                                        # but pos may be past buf end → raises
+    except:
+        raised = True
+    assert_true(raised, "huge vector count: oob element access must raise")
+
+
+fn test_adversarial_vtable_size_huge() raises:
+    # Build a valid table, then corrupt vtable_size to 0xFFFF.
+    # _field_voffset should still not read past the buffer (defense-in-depth check).
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(42))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # Find vtable position and corrupt its size field
+    var r0 = FlatBuffersReader(buf)
+    var tp0 = r0.root()
+    var vt = r0._vtable_pos(tp0)
+    write_u16_le(buf, vt, UInt16(0xFFFF))
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    # Requesting a far slot (slot 1000) with huge vt_size:
+    # slot_byte = 4 + 1000*2 = 2004. Check: 2004+1 >= 0xFFFF → False (passes vt_size check).
+    # Defense-in-depth: vt + 2004 >= len(buf) → returns 0 (not crash).
+    var voff = r._field_voffset(tp, 1000)
+    assert_eq_u16(voff, UInt16(0), "huge vtable_size: far slot must return 0")
+
+
+fn test_adversarial_corrupt_vtable_slot() raises:
+    # Build a valid table, corrupt a vtable slot VOffset to point past the
+    # object end so read_i32_le has to bounds-check it.
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(7))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # Corrupt slot 0 VOffset to 0xFFFF (far past object)
+    var r0 = FlatBuffersReader(buf)
+    var tp0 = r0.root()
+    var vt = r0._vtable_pos(tp0)
+    write_u16_le(buf, vt + 4, UInt16(0xFFFF))
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var raised = False
+    try:
+        _ = r.read_i32(tp, 0)  # voff=0xFFFF → field_pos = tp+0xFFFF (past buf) → raises
+    except:
+        raised = True
+    assert_true(raised, "corrupt vtable slot pointing oob must raise")
+
+
+fn test_adversarial_self_referential_offset() raises:
+    # A UOffset that points exactly back to itself forms a logical cycle.
+    # The reader must not hang — it just returns a new (possibly invalid) position.
+    var b = FlatBufferBuilder()
+    var soff = b.create_string("x")
+    b.start_table()
+    b.add_field_offset(0, soff)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    # Corrupt the string UOffset field to 0 (relative offset = 0 means
+    # the "string" starts at the field's own position — a degenerate cycle).
+    var r0 = FlatBuffersReader(buf)
+    var tp0 = r0.root()
+    var voff0 = r0._field_voffset(tp0, 0)
+    var ref_pos = Int(tp0) + Int(voff0)
+    write_u32_le(buf, ref_pos, UInt32(0))  # offset = 0 → str_pos = ref_pos + 0 = ref_pos
+    # read_string follows the (now zero) offset: str_pos = ref_pos.
+    # The "length" field read at ref_pos will be whatever bytes are there.
+    # Either it finds a huge length and raises, or finds a valid length.
+    # Important: it must NOT loop infinitely.
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var raised = False
+    try:
+        _ = r.read_string(tp, 0)  # may raise or succeed — must not hang
+    except:
+        raised = True
+    # Pass regardless of raise/no-raise: the key is it terminates.
+    assert_true(True, "self-referential offset must terminate")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -1147,6 +1383,18 @@ fn main() raises:
     run_test("test_empty_vector_u32", passed, failed, test_empty_vector_u32)
     run_test("test_vtable_dedup_10_identical", passed, failed, test_vtable_dedup_10_identical)
     run_test("test_full_composite_roundtrip", passed, failed, test_full_composite_roundtrip)
+
+    # Phase 7 — Adversarial / security tests
+    run_test("test_adversarial_all_zeros", passed, failed, test_adversarial_all_zeros)
+    run_test("test_adversarial_all_0xff", passed, failed, test_adversarial_all_0xff)
+    run_test("test_adversarial_truncated_buffer", passed, failed, test_adversarial_truncated_buffer)
+    run_test("test_adversarial_root_past_end", passed, failed, test_adversarial_root_past_end)
+    run_test("test_adversarial_negative_vtable_pos", passed, failed, test_adversarial_negative_vtable_pos)
+    run_test("test_adversarial_string_length_oob", passed, failed, test_adversarial_string_length_oob)
+    run_test("test_adversarial_vector_count_huge", passed, failed, test_adversarial_vector_count_huge)
+    run_test("test_adversarial_vtable_size_huge", passed, failed, test_adversarial_vtable_size_huge)
+    run_test("test_adversarial_corrupt_vtable_slot", passed, failed, test_adversarial_corrupt_vtable_slot)
+    run_test("test_adversarial_self_referential_offset", passed, failed, test_adversarial_self_referential_offset)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:

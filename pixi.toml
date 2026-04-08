@@ -6,6 +6,7 @@ version = "0.1.0"
 
 [tasks]
 test-flatbuffers = "mojo run test_flatbuffers.mojo"
+bench-flatbuffers = "mojo run bench_flatbuffers.mojo"
 format = "mblack flatbuffers.mojo test_flatbuffers.mojo"
 
 [dependencies]
