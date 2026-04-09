@@ -1291,6 +1291,94 @@ fn test_adversarial_self_referential_offset() raises:
 
 
 # ============================================================================
+# Struct vector tests (create_vector_structs / vec_struct_bytes)
+# ============================================================================
+
+
+fn test_create_vector_structs_16byte() raises:
+    # Simulate two FieldNode-like structs: each 16 bytes = [i64 length][i64 null_count]
+    # struct0: length=100, null_count=5
+    # struct1: length=200, null_count=0
+    var data = List[UInt8](capacity=32)
+    for _ in range(32):
+        data.append(UInt8(0))
+    write_i64_le(data, 0, Int64(100))
+    write_i64_le(data, 8, Int64(5))
+    write_i64_le(data, 16, Int64(200))
+    write_i64_le(data, 24, Int64(0))
+
+    var b = FlatBufferBuilder(64)
+    var vec_off = b.create_vector_structs(data, 2, 16, 8)
+    b.start_table()
+    b.add_field_offset(0, vec_off)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    _ = len(buf)
+
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(2), "struct vec count")
+
+    var s0 = r.vec_struct_bytes(vec_pos, UInt32(0), 16)
+    var s1 = r.vec_struct_bytes(vec_pos, UInt32(1), 16)
+    assert_eq_u32(UInt32(len(s0)), UInt32(16), "struct0 size")
+    assert_eq_u32(UInt32(len(s1)), UInt32(16), "struct1 size")
+
+    # Verify struct0 fields via LE reads
+    var len0 = read_i64_le(s0, 0)
+    var nc0  = read_i64_le(s0, 8)
+    assert_true(len0 == Int64(100), "struct0 length: " + String(len0))
+    assert_true(nc0  == Int64(5),   "struct0 null_count: " + String(nc0))
+
+    var len1 = read_i64_le(s1, 0)
+    var nc1  = read_i64_le(s1, 8)
+    assert_true(len1 == Int64(200), "struct1 length: " + String(len1))
+    assert_true(nc1  == Int64(0),   "struct1 null_count: " + String(nc1))
+
+
+fn test_create_vector_structs_empty() raises:
+    # Zero-element struct vector — count must be 0, no bytes.
+    var data = List[UInt8]()
+    var b = FlatBufferBuilder(32)
+    var vec_off = b.create_vector_structs(data, 0, 16, 8)
+    b.start_table()
+    b.add_field_offset(0, vec_off)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    _ = len(buf)
+
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    assert_eq_u32(r.vector_len(vec_pos), UInt32(0), "empty struct vec count")
+
+
+fn test_vec_struct_bytes_oob() raises:
+    # Accessing index >= count must raise.
+    var data = List[UInt8]()
+    for _ in range(16):
+        data.append(UInt8(0))
+    var b = FlatBufferBuilder(64)
+    var vec_off = b.create_vector_structs(data, 1, 16, 8)
+    b.start_table()
+    b.add_field_offset(0, vec_off)
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+    _ = len(buf)
+
+    var r = FlatBuffersReader(buf)
+    var tp = r.root()
+    var vec_pos = r.read_vector(tp, 0)
+    var raised = False
+    try:
+        _ = r.vec_struct_bytes(vec_pos, UInt32(1), 16)
+    except:
+        raised = True
+    assert_true(raised, "expected oob raise for index 1 in 1-element struct vec")
+
+
+# ============================================================================
 # Test runner
 # ============================================================================
 
@@ -1395,6 +1483,11 @@ fn main() raises:
     run_test("test_adversarial_vtable_size_huge", passed, failed, test_adversarial_vtable_size_huge)
     run_test("test_adversarial_corrupt_vtable_slot", passed, failed, test_adversarial_corrupt_vtable_slot)
     run_test("test_adversarial_self_referential_offset", passed, failed, test_adversarial_self_referential_offset)
+
+    # Struct vector (create_vector_structs / vec_struct_bytes)
+    run_test("test_create_vector_structs_16byte", passed, failed, test_create_vector_structs_16byte)
+    run_test("test_create_vector_structs_empty", passed, failed, test_create_vector_structs_empty)
+    run_test("test_vec_struct_bytes_oob", passed, failed, test_vec_struct_bytes_oob)
 
     print("\n" + String(passed) + "/" + String(passed + failed) + " passed")
     if failed > 0:
