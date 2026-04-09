@@ -435,6 +435,47 @@ struct FlatBufferBuilder(Movable):
         write_u32_le(self._buf, self._head, UInt32(n))
         return self.offset()
 
+    fn create_vector_structs(
+        mut self,
+        data: List[UInt8],
+        count: Int,
+        struct_size: Int,
+        struct_align: Int,
+    ) raises -> UInt32:
+        """Create a vector of inline FlatBuffers structs.
+
+        data       — count * struct_size bytes, structs laid out in forward order.
+        count      — number of struct elements.
+        struct_size — byte size of each struct element.
+        struct_align — alignment of each struct element (typically 8 for Arrow structs).
+
+        Returns a UOffset suitable for add_field_offset.
+        Elements are read back with vec_struct_bytes(vec_pos, i, struct_size).
+        """
+        if count < 0:
+            raise Error("flatbuffers: create_vector_structs: negative count")
+        if len(data) != count * struct_size:
+            raise Error(
+                "flatbuffers: create_vector_structs: data length "
+                + String(len(data))
+                + " != count("
+                + String(count)
+                + ") * struct_size("
+                + String(struct_size)
+                + ")"
+            )
+        var n_bytes = count * struct_size
+        # Align so that struct data has struct_align alignment from the tail.
+        self._prep(struct_align, n_bytes)
+        # Write struct bytes in reverse (prepend model → forward order in result).
+        for i in range(n_bytes - 1, -1, -1):
+            self._head -= 1
+            self._buf[self._head] = data[i]
+        # Write count (u32, 4 bytes) — immediately before struct data.
+        self._head -= 4
+        write_u32_le(self._buf, self._head, UInt32(count))
+        return self.offset()
+
     # ------------------------------------------------------------------
     # Table building
     # ------------------------------------------------------------------
@@ -839,6 +880,32 @@ struct FlatBuffersReader(Movable):
             raise Error("flatbuffers: vec index " + String(i) + " >= len " + String(vlen))
         var elem_pos = Int(vec_pos) + 4 + Int(i) * 4
         return UInt32(elem_pos) + read_u32_le(self._buf, elem_pos)
+
+    fn vec_struct_bytes(
+        self, vec_pos: UInt32, i: UInt32, struct_size: Int
+    ) raises -> List[UInt8]:
+        """Return struct_size bytes for element i of a struct vector.
+
+        vec_pos    — absolute position of the vector's length field (from read_vector).
+        i          — zero-based element index.
+        struct_size — byte size of each struct element.
+        """
+        var vlen = self.vector_len(vec_pos)
+        if i >= vlen:
+            raise Error(
+                "flatbuffers: vec_struct_bytes index "
+                + String(i)
+                + " >= len "
+                + String(vlen)
+            )
+        var start = Int(vec_pos) + 4 + Int(i) * struct_size
+        var end = start + struct_size
+        if end > len(self._buf):
+            raise Error("flatbuffers: vec_struct_bytes extends beyond buffer")
+        var result = List[UInt8](capacity=struct_size)
+        for j in range(struct_size):
+            result.append(self._buf[start + j])
+        return result^
 
     fn read_string_at(self, str_pos: UInt32) raises -> String:
         """Read a string directly from its absolute buffer position."""
