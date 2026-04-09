@@ -1,6 +1,6 @@
 [package]
 name = "flatbuffers"
-version = "1.0.0"
+version = "1.0.2"
 description = "Pure-Mojo FlatBuffers binary format encoder/decoder"
 license = "MIT"
 platforms = ["linux-64", "osx-arm64"]
