@@ -16,7 +16,7 @@ from flatbuffers import (
 def assert_eq_u8(actual: UInt8, expected: UInt8, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             m = msg + ": " + m
         raise Error(m)
 
@@ -24,7 +24,7 @@ def assert_eq_u8(actual: UInt8, expected: UInt8, msg: String = "") raises:
 def assert_eq_u16(actual: UInt16, expected: UInt16, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             m = msg + ": " + m
         raise Error(m)
 
@@ -32,7 +32,7 @@ def assert_eq_u16(actual: UInt16, expected: UInt16, msg: String = "") raises:
 def assert_eq_u32(actual: UInt32, expected: UInt32, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             m = msg + ": " + m
         raise Error(m)
 
@@ -40,7 +40,7 @@ def assert_eq_u32(actual: UInt32, expected: UInt32, msg: String = "") raises:
 def assert_eq_i32(actual: Int32, expected: Int32, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             m = msg + ": " + m
         raise Error(m)
 
@@ -48,7 +48,7 @@ def assert_eq_i32(actual: Int32, expected: Int32, msg: String = "") raises:
 def assert_eq_u64(actual: UInt64, expected: UInt64, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             m = msg + ": " + m
         raise Error(m)
 
@@ -56,14 +56,14 @@ def assert_eq_u64(actual: UInt64, expected: UInt64, msg: String = "") raises:
 def assert_eq_int(actual: Int, expected: Int, msg: String = "") raises:
     if actual != expected:
         var m = "expected " + String(expected) + " got " + String(actual)
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             m = msg + ": " + m
         raise Error(m)
 
 
 def assert_true(cond: Bool, msg: String = "") raises:
     if not cond:
-        if len(msg) > 0:
+        if msg.byte_length() > 0:
             raise Error(msg)
         raise Error("expected True")
 
@@ -1387,7 +1387,7 @@ def run_test(
     name: String,
     mut passed: Int,
     mut failed: Int,
-    test_fn: fn () raises -> None,
+    test_fn: def () raises -> None,
 ):
     try:
         test_fn()

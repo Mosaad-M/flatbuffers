@@ -205,7 +205,7 @@ struct FieldLoc(Copyable, Movable):
         self.slot = copy.slot
         self.offset = copy.offset
 
-    def __init__(out self, *, take: Self):
+    def __init__(out self, *, deinit take: Self):
         self.slot = take.slot
         self.offset = take.offset
 
@@ -240,7 +240,7 @@ struct FlatBufferBuilder(Movable):
         self._in_table   = False
         self._field_locs = List[FieldLoc]()
 
-    def __init__(out self, *, take: Self):
+    def __init__(out self, *, deinit take: Self):
         self._buf        = take._buf^
         self._head       = take._head
         self._min_align  = take._min_align
@@ -685,7 +685,7 @@ struct FlatBuffersReader(Movable):
     def __init__(out self, buf: List[UInt8]):
         self._buf = buf.copy()
 
-    def __init__(out self, *, take: Self):
+    def __init__(out self, *, deinit take: Self):
         self._buf = take._buf^
 
     # ------------------------------------------------------------------
