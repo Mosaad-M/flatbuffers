@@ -96,7 +96,7 @@ def _make_buf(size: Int) -> List[UInt8]:
 # ============================================================================
 
 
-def test_write_read_u8_roundtrip() raises:
+fn test_write_read_u8_roundtrip() raises:
     var buf = _make_buf(4)
     write_u8(buf, 0, UInt8(0x42))
     assert_eq_u8(read_u8(buf, 0), UInt8(0x42))
@@ -104,7 +104,7 @@ def test_write_read_u8_roundtrip() raises:
     assert_eq_u8(read_u8(buf, 3), UInt8(0xFF))
 
 
-def test_write_read_u16_le_byte_order() raises:
+fn test_write_read_u16_le_byte_order() raises:
     var buf = _make_buf(4)
     write_u16_le(buf, 0, UInt16(0xABCD))
     # little-endian: low byte first
@@ -113,7 +113,7 @@ def test_write_read_u16_le_byte_order() raises:
     assert_eq_u16(read_u16_le(buf, 0), UInt16(0xABCD), "roundtrip")
 
 
-def test_write_read_u32_le_roundtrip() raises:
+fn test_write_read_u32_le_roundtrip() raises:
     var buf = _make_buf(8)
     write_u32_le(buf, 0, UInt32(0xDEADBEEF))
     assert_eq_u8(buf[0], UInt8(0xEF), "byte0")
@@ -126,7 +126,7 @@ def test_write_read_u32_le_roundtrip() raises:
     assert_eq_u32(read_u32_le(buf, 4), UInt32(0x12345678), "offset 4")
 
 
-def test_write_read_i32_le_negative() raises:
+fn test_write_read_i32_le_negative() raises:
     var buf = _make_buf(4)
     write_i32_le(buf, 0, Int32(-1))
     # -1 in two's complement = 0xFFFFFFFF
@@ -139,7 +139,7 @@ def test_write_read_i32_le_negative() raises:
     assert_eq_i32(read_i32_le(buf, 0), Int32(-2147483648), "INT32_MIN")
 
 
-def test_write_read_u64_le_roundtrip() raises:
+fn test_write_read_u64_le_roundtrip() raises:
     var buf = _make_buf(8)
     var val = UInt64(0xCAFEBABEDEADBEEF)
     write_u64_le(buf, 0, val)
@@ -149,7 +149,7 @@ def test_write_read_u64_le_roundtrip() raises:
     assert_eq_u8(buf[7], UInt8(0xCA), "highest byte")
 
 
-def test_write_read_f32_le_roundtrip() raises:
+fn test_write_read_f32_le_roundtrip() raises:
     var buf = _make_buf(4)
     var val = Float32(1.0)
     write_f32_le(buf, 0, val)
@@ -161,7 +161,7 @@ def test_write_read_f32_le_roundtrip() raises:
     assert_true(back2 == Float32(-3.14), "-3.14 roundtrip")
 
 
-def test_write_read_f64_le_roundtrip() raises:
+fn test_write_read_f64_le_roundtrip() raises:
     var buf = _make_buf(8)
     var val = Float64(3.141592653589793)
     write_f64_le(buf, 0, val)
@@ -171,14 +171,14 @@ def test_write_read_f64_le_roundtrip() raises:
     assert_true(read_f64_le(buf, 0) == Float64(0.0), "zero roundtrip")
 
 
-def test_padding_to_already_aligned() raises:
+fn test_padding_to_already_aligned() raises:
     assert_eq_int(padding_to(8, 4), 0, "8 mod 4")
     assert_eq_int(padding_to(0, 8), 0, "0 mod 8")
     assert_eq_int(padding_to(16, 8), 0, "16 mod 8")
     assert_eq_int(padding_to(4, 4), 0, "4 mod 4")
 
 
-def test_padding_to_needs_padding() raises:
+fn test_padding_to_needs_padding() raises:
     assert_eq_int(padding_to(5, 4), 3, "5→4")
     assert_eq_int(padding_to(1, 8), 7, "1→8")
     assert_eq_int(padding_to(3, 4), 1, "3→4")
@@ -186,7 +186,7 @@ def test_padding_to_needs_padding() raises:
     assert_eq_int(padding_to(1, 2), 1, "1→2")
 
 
-def test_read_out_of_bounds_raises() raises:
+fn test_read_out_of_bounds_raises() raises:
     var buf = _make_buf(3)
     # read_u32_le needs 4 bytes; pos=0 needs bytes 0..3 but buf only has 3
     var raised = False
@@ -216,21 +216,21 @@ def test_read_out_of_bounds_raises() raises:
 # ============================================================================
 
 
-def test_builder_initial_state() raises:
+fn test_builder_initial_state() raises:
     var b = FlatBufferBuilder(256)
     assert_eq_int(len(b._buf), 256, "buf size")
     assert_eq_int(b._head, 256, "head at end")
     assert_eq_u32(b.offset(), UInt32(0), "offset is 0")
 
 
-def test_prepend_u8_single() raises:
+fn test_prepend_u8_single() raises:
     var b = FlatBufferBuilder(256)
     b.prepend_u8(UInt8(0x55))
     assert_eq_u32(b.offset(), UInt32(1), "offset after u8")
     assert_eq_u8(b._buf[b._head], UInt8(0x55), "value at head")
 
 
-def test_prepend_u32_alignment() raises:
+fn test_prepend_u32_alignment() raises:
     var b = FlatBufferBuilder(256)
     # Prepend a u8 first to misalign, then prepend u32 — should insert 3 padding bytes
     b.prepend_u8(UInt8(0x01))
@@ -246,7 +246,7 @@ def test_prepend_u32_alignment() raises:
     assert_eq_u8(b._buf[b._head + 3], UInt8(0xDE), "byte3")
 
 
-def test_prepend_scalars_layout() raises:
+fn test_prepend_scalars_layout() raises:
     var b = FlatBufferBuilder(256)
     b.prepend_u8(UInt8(0xAA))
     b.prepend_u16(UInt16(0x1234))
@@ -261,7 +261,7 @@ def test_prepend_scalars_layout() raises:
     assert_eq_u8(buf[head + 3], UInt8(0x89), "u32 b3")
 
 
-def test_builder_grow_on_overflow() raises:
+fn test_builder_grow_on_overflow() raises:
     var b = FlatBufferBuilder(64)
     # Prepend 300 u8 bytes to force multiple grows
     for i in range(300):
@@ -278,7 +278,7 @@ def _buf_at_offset(b: FlatBufferBuilder, off: UInt32) -> Int:
     return len(b._buf) - Int(off)
 
 
-def test_create_string_hello() raises:
+fn test_create_string_hello() raises:
     var b = FlatBufferBuilder(256)
     var off = b.create_string("hello")
     # UOffset points to start of string object = length field
@@ -300,7 +300,7 @@ def test_create_string_hello() raises:
     assert_eq_u8(b._buf[abs_pos + 9], UInt8(0), "null")
 
 
-def test_create_string_empty() raises:
+fn test_create_string_empty() raises:
     var b = FlatBufferBuilder(256)
     var off = b.create_string("")
     var abs_pos = _buf_at_offset(b, off)
@@ -315,7 +315,7 @@ def test_create_string_empty() raises:
     assert_eq_u8(b._buf[abs_pos + 4], UInt8(0), "null after empty")
 
 
-def test_create_string_unicode() raises:
+fn test_create_string_unicode() raises:
     # "café" = 'c','a','f','é' where é = 0xC3 0xA9 (UTF-8, 2 bytes)
     var b = FlatBufferBuilder(256)
     var off = b.create_string("café")
@@ -339,7 +339,7 @@ def test_create_string_unicode() raises:
 # ============================================================================
 
 
-def test_create_vector_u8_empty() raises:
+fn test_create_vector_u8_empty() raises:
     var b = FlatBufferBuilder()
     var off = b.create_vector_u8(List[UInt8]())
     var abs_pos = _buf_at_offset(b, off)
@@ -352,7 +352,7 @@ def test_create_vector_u8_empty() raises:
         UInt32(0), "empty vector count")
 
 
-def test_create_vector_u8_values() raises:
+fn test_create_vector_u8_values() raises:
     var b = FlatBufferBuilder()
     var data = List[UInt8]()
     data.append(UInt8(1))
@@ -372,7 +372,7 @@ def test_create_vector_u8_values() raises:
     assert_eq_u8(b._buf[abs_pos + 6], UInt8(3), "elem2")
 
 
-def test_create_vector_u32_alignment() raises:
+fn test_create_vector_u32_alignment() raises:
     var b = FlatBufferBuilder()
     var data = List[UInt32]()
     data.append(UInt32(0xDEAD))
@@ -401,7 +401,7 @@ def test_create_vector_u32_alignment() raises:
         UInt32(0xBEEF), "elem1")
 
 
-def test_start_end_table_empty() raises:
+fn test_start_end_table_empty() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     var toff = b.end_table()
@@ -411,7 +411,7 @@ def test_start_end_table_empty() raises:
     assert_eq_int(len(b._vtables), 1, "one vtable recorded")
 
 
-def test_table_one_i32_field() raises:
+fn test_table_one_i32_field() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(42))
@@ -429,7 +429,7 @@ def test_table_one_i32_field() raises:
     assert_true(Int(slot0) > 0, "slot 0 nonzero")
 
 
-def test_table_field_absent() raises:
+fn test_table_field_absent() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(99))
@@ -450,7 +450,7 @@ def test_table_field_absent() raises:
     # vtable correctly has no entry for slot 1 — this is standard FlatBuffers behavior
 
 
-def test_vtable_deduplication() raises:
+fn test_vtable_deduplication() raises:
     var b = FlatBufferBuilder()
     # Build first table
     b.start_table()
@@ -467,7 +467,7 @@ def test_vtable_deduplication() raises:
     assert_true(t1 != t2, "different table offsets")
 
 
-def test_finish_root_offset() raises:
+fn test_finish_root_offset() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     var toff = b.end_table()
@@ -488,7 +488,7 @@ def test_finish_root_offset() raises:
     assert_true(vt_size >= 4, "vtable header present")
 
 
-def test_table_with_string_field() raises:
+fn test_table_with_string_field() raises:
     var b = FlatBufferBuilder()
     var soff = b.create_string("mojo")
     b.start_table()
@@ -515,7 +515,7 @@ def test_table_with_string_field() raises:
     assert_eq_u8(buf[str_pos + 7], UInt8(ord("o")), "o2")
 
 
-def test_nested_table() raises:
+fn test_nested_table() raises:
     # Inner table: one i32 field (value=99)
     var b = FlatBufferBuilder()
     b.start_table()
@@ -548,7 +548,7 @@ def test_nested_table() raises:
 # ============================================================================
 
 
-def test_reader_root_offset() raises:
+fn test_reader_root_offset() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(7))
@@ -561,7 +561,7 @@ def test_reader_root_offset() raises:
     assert_true(Int(root) < len(r._buf), "root < len(buf)")
 
 
-def test_reader_vtable_resolution() raises:
+fn test_reader_vtable_resolution() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(5))
@@ -578,7 +578,7 @@ def test_reader_vtable_resolution() raises:
     assert_true(vt_size >= 6, "vtable_size >= 6")
 
 
-def test_reader_scalar_i32() raises:
+fn test_reader_scalar_i32() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(1234))
@@ -589,7 +589,7 @@ def test_reader_scalar_i32() raises:
     assert_eq_i32(r.read_i32(tp, 0), Int32(1234), "i32 roundtrip")
 
 
-def test_reader_scalar_f64() raises:
+fn test_reader_scalar_f64() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_f64(0, Float64(3.141592653589793))
@@ -602,7 +602,7 @@ def test_reader_scalar_f64() raises:
     assert_true(val == Float64(3.141592653589793), "f64 roundtrip")
 
 
-def test_reader_scalar_bool_true() raises:
+fn test_reader_scalar_bool_true() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_bool(0, True)
@@ -613,7 +613,7 @@ def test_reader_scalar_bool_true() raises:
     assert_true(r.read_bool(tp, 0), "bool True roundtrip")
 
 
-def test_reader_scalar_bool_false() raises:
+fn test_reader_scalar_bool_false() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_bool(0, False)
@@ -624,7 +624,7 @@ def test_reader_scalar_bool_false() raises:
     assert_true(not r.read_bool(tp, 0), "bool False roundtrip")
 
 
-def test_reader_absent_field_returns_default() raises:
+fn test_reader_absent_field_returns_default() raises:
     # Build a table with only slot 0; slot 1 and 2 are absent
     var b = FlatBufferBuilder()
     b.start_table()
@@ -641,7 +641,7 @@ def test_reader_absent_field_returns_default() raises:
     assert_eq_i32(r.read_i32(tp, 2), Int32(0), "slot 2 zero default")
 
 
-def test_reader_string_field() raises:
+fn test_reader_string_field() raises:
     var b = FlatBufferBuilder()
     var soff = b.create_string("flatbuffers")
     b.start_table()
@@ -654,7 +654,7 @@ def test_reader_string_field() raises:
     assert_true(s == "flatbuffers", "string roundtrip: " + s)
 
 
-def test_reader_string_unicode() raises:
+fn test_reader_string_unicode() raises:
     # "日本語" = 3 CJK characters, 9 bytes in UTF-8
     var b = FlatBufferBuilder()
     var soff = b.create_string("日本語")
@@ -668,7 +668,7 @@ def test_reader_string_unicode() raises:
     assert_true(s == "日本語", "unicode string roundtrip: " + s)
 
 
-def test_reader_multi_field_table() raises:
+fn test_reader_multi_field_table() raises:
     # Table with slot 0=i32(42), slot 1=f32(1.5), slot 2=string("hello")
     var b = FlatBufferBuilder()
     var soff = b.create_string("hello")
@@ -691,7 +691,7 @@ def test_reader_multi_field_table() raises:
 # ============================================================================
 
 
-def test_reader_vector_u8() raises:
+fn test_reader_vector_u8() raises:
     var b = FlatBufferBuilder()
     var data = List[UInt8]()
     data.append(UInt8(10))
@@ -711,7 +711,7 @@ def test_reader_vector_u8() raises:
     assert_eq_u8(r.vec_u8(vec_pos, UInt32(2)), UInt8(30), "elem2")
 
 
-def test_reader_vector_u32() raises:
+fn test_reader_vector_u32() raises:
     var b = FlatBufferBuilder()
     var data = List[UInt32]()
     data.append(UInt32(100))
@@ -731,7 +731,7 @@ def test_reader_vector_u32() raises:
     assert_eq_u32(r.vec_u32(vec_pos, UInt32(2)), UInt32(300), "elem2")
 
 
-def test_reader_vector_length_zero() raises:
+fn test_reader_vector_length_zero() raises:
     var b = FlatBufferBuilder()
     var voff = b.create_vector_u8(List[UInt8]())
     b.start_table()
@@ -744,7 +744,7 @@ def test_reader_vector_length_zero() raises:
     assert_eq_u32(r.vector_len(vec_pos), UInt32(0), "empty len")
 
 
-def test_reader_vector_of_strings() raises:
+fn test_reader_vector_of_strings() raises:
     var b = FlatBufferBuilder()
     var s1 = b.create_string("foo")
     var s2 = b.create_string("bar")
@@ -766,7 +766,7 @@ def test_reader_vector_of_strings() raises:
     assert_true(str1 == "bar", "str1: " + str1)
 
 
-def test_reader_nested_table() raises:
+fn test_reader_nested_table() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(99))
@@ -781,7 +781,7 @@ def test_reader_nested_table() raises:
     assert_eq_i32(r.read_i32(inner_tp, 0), Int32(99), "nested i32")
 
 
-def test_reader_deeply_nested() raises:
+fn test_reader_deeply_nested() raises:
     # A → B → C → i32=77
     var b = FlatBufferBuilder()
     b.start_table()
@@ -801,7 +801,7 @@ def test_reader_deeply_nested() raises:
     assert_eq_i32(r.read_i32(c_tp, 0), Int32(77), "deep nested i32")
 
 
-def test_reader_vector_of_tables() raises:
+fn test_reader_vector_of_tables() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(10))
@@ -827,7 +827,7 @@ def test_reader_vector_of_tables() raises:
     assert_eq_i32(r.read_i32(inner2, 0), Int32(20), "table1 i32")
 
 
-def test_reader_union_present() raises:
+fn test_reader_union_present() raises:
     # Union: type slot=2 (u8), value slot=3 (UOffset to inner table)
     # Inner table has i32=55 at slot 0
     var b = FlatBufferBuilder()
@@ -846,7 +846,7 @@ def test_reader_union_present() raises:
     assert_eq_i32(r.read_i32(union_tp, 0), Int32(55), "union table value")
 
 
-def test_reader_union_type_zero() raises:
+fn test_reader_union_type_zero() raises:
     # No union set: type slot absent → type=0, value slot absent → union_table raises
     var b = FlatBufferBuilder()
     b.start_table()
@@ -864,7 +864,7 @@ def test_reader_union_type_zero() raises:
     assert_true(raised, "union_table raises when absent")
 
 
-def test_reader_vector_bounds_check() raises:
+fn test_reader_vector_bounds_check() raises:
     var b = FlatBufferBuilder()
     var data = List[UInt8]()
     data.append(UInt8(1))
@@ -892,7 +892,7 @@ def test_reader_vector_bounds_check() raises:
 # ============================================================================
 
 
-def test_missing_field_default_i32() raises:
+fn test_missing_field_default_i32() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(1))
@@ -905,7 +905,7 @@ def test_missing_field_default_i32() raises:
     assert_eq_i32(r.read_i32(tp, 1), Int32(0), "default 0")
 
 
-def test_missing_field_default_f64() raises:
+fn test_missing_field_default_f64() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     b.add_field_i32(0, Int32(1))
@@ -918,7 +918,7 @@ def test_missing_field_default_f64() raises:
     assert_f64_near(r.read_f64(tp, 1), Float64(0.0), Float64(1e-15))
 
 
-def test_missing_string_raises() raises:
+fn test_missing_string_raises() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     var toff = b.end_table()
@@ -933,7 +933,7 @@ def test_missing_string_raises() raises:
     assert_true(raised, "absent string slot must raise")
 
 
-def test_missing_offset_raises() raises:
+fn test_missing_offset_raises() raises:
     var b = FlatBufferBuilder()
     b.start_table()
     var toff = b.end_table()
@@ -948,7 +948,7 @@ def test_missing_offset_raises() raises:
     assert_true(raised, "absent offset slot must raise")
 
 
-def test_buffer_growth_boundary() raises:
+fn test_buffer_growth_boundary() raises:
     # Builder with capacity 16; write exactly 16 bytes, then 1 more → growth
     var b = FlatBufferBuilder(16)
     for i in range(16):
@@ -961,7 +961,7 @@ def test_buffer_growth_boundary() raises:
     assert_eq_u8(b._buf[len(b._buf) - 1], UInt8(1), "first byte correct")
 
 
-def test_buffer_growth_50_strings() raises:
+fn test_buffer_growth_50_strings() raises:
     var b = FlatBufferBuilder()
     var str_offs = List[UInt32]()
     for i in range(50):
@@ -982,7 +982,7 @@ def test_buffer_growth_50_strings() raises:
         assert_true(s == expected, "str" + String(i) + ": " + s)
 
 
-def test_empty_string_roundtrip() raises:
+fn test_empty_string_roundtrip() raises:
     var b = FlatBufferBuilder()
     var soff = b.create_string("")
     b.start_table()
@@ -995,7 +995,7 @@ def test_empty_string_roundtrip() raises:
     assert_true(s == "", "empty string: '" + s + "'")
 
 
-def test_empty_vector_u32() raises:
+fn test_empty_vector_u32() raises:
     var b = FlatBufferBuilder()
     var voff = b.create_vector_u32(List[UInt32]())
     b.start_table()
@@ -1008,7 +1008,7 @@ def test_empty_vector_u32() raises:
     assert_eq_u32(r.vector_len(vec_pos), UInt32(0), "empty vec len=0")
 
 
-def test_vtable_dedup_10_identical() raises:
+fn test_vtable_dedup_10_identical() raises:
     var b = FlatBufferBuilder()
     for i in range(10):
         b.start_table()
@@ -1018,7 +1018,7 @@ def test_vtable_dedup_10_identical() raises:
     assert_eq_int(len(b._vtables), 1, "10 identical tables → 1 vtable")
 
 
-def test_full_composite_roundtrip() raises:
+fn test_full_composite_roundtrip() raises:
     var b = FlatBufferBuilder()
     # Inner nested table
     b.start_table()
@@ -1059,7 +1059,7 @@ def test_full_composite_roundtrip() raises:
 # ============================================================================
 
 
-def test_adversarial_all_zeros() raises:
+fn test_adversarial_all_zeros() raises:
     # 64-byte all-zero buffer: root=0, vtable_size=0 → all fields absent.
     # Scalar reads must return defaults; string/offset reads must raise.
     var buf = List[UInt8]()
@@ -1076,7 +1076,7 @@ def test_adversarial_all_zeros() raises:
     assert_true(raised, "absent string raises on zeros buf")
 
 
-def test_adversarial_all_0xff() raises:
+fn test_adversarial_all_0xff() raises:
     # 64-byte 0xFF buffer: root = 0xFFFFFFFF which is far past the buffer end.
     # _vtable_pos must raise when trying to read soffset at that position.
     var buf = List[UInt8]()
@@ -1093,7 +1093,7 @@ def test_adversarial_all_0xff() raises:
     assert_true(raised, "0xFF buf: vtable read past end must raise")
 
 
-def test_adversarial_truncated_buffer() raises:
+fn test_adversarial_truncated_buffer() raises:
     # 3-byte buffer: not even enough for the root UOffset (needs 4 bytes).
     var buf = List[UInt8]()
     buf.append(UInt8(0x00))
@@ -1108,7 +1108,7 @@ def test_adversarial_truncated_buffer() raises:
     assert_true(raised, "3-byte buf: root() must raise")
 
 
-def test_adversarial_root_past_end() raises:
+fn test_adversarial_root_past_end() raises:
     # 8-byte buffer where root UOffset = 100 (past the 8-byte buffer end).
     # Reading the soffset for that table position must raise.
     var buf = List[UInt8]()
@@ -1128,7 +1128,7 @@ def test_adversarial_root_past_end() raises:
     assert_true(raised, "root past end: vtable read must raise")
 
 
-def test_adversarial_negative_vtable_pos() raises:
+fn test_adversarial_negative_vtable_pos() raises:
     # Craft soffset = -100 so vtable_pos = table_pos + soffset < 0 → raises.
     # Buffer: [root_lo,0,0,0, soff_lo,soff_hi,soff_hi,soff_hi, ...]
     # root = 4 (table at byte 4), soffset = -100 → vtable at 4-100 = -96.
@@ -1155,7 +1155,7 @@ def test_adversarial_negative_vtable_pos() raises:
     assert_true(raised, "negative vtable_pos must raise")
 
 
-def test_adversarial_string_length_oob() raises:
+fn test_adversarial_string_length_oob() raises:
     # Build a real buffer with a short string, then corrupt the string length
     # field to 0xFFFFFFFF so it claims far more bytes than the buffer holds.
     var b = FlatBufferBuilder()
@@ -1183,7 +1183,7 @@ def test_adversarial_string_length_oob() raises:
     assert_true(raised, "string length oob must raise")
 
 
-def test_adversarial_vector_count_huge() raises:
+fn test_adversarial_vector_count_huge() raises:
     # Build a real vector, corrupt the count field to 0xFFFFFFFF, then try
     # to access element 0. read_u8 bounds check must catch the OOB access.
     var b = FlatBufferBuilder()
@@ -1214,7 +1214,7 @@ def test_adversarial_vector_count_huge() raises:
     assert_true(raised, "huge vector count: oob element access must raise")
 
 
-def test_adversarial_vtable_size_huge() raises:
+fn test_adversarial_vtable_size_huge() raises:
     # Build a valid table, then corrupt vtable_size to 0xFFFF.
     # _field_voffset should still not read past the buffer (defense-in-depth check).
     var b = FlatBufferBuilder()
@@ -1236,7 +1236,7 @@ def test_adversarial_vtable_size_huge() raises:
     assert_eq_u16(voff, UInt16(0), "huge vtable_size: far slot must return 0")
 
 
-def test_adversarial_corrupt_vtable_slot() raises:
+fn test_adversarial_corrupt_vtable_slot() raises:
     # Build a valid table, corrupt a vtable slot VOffset to point past the
     # object end so read_i32_le has to bounds-check it.
     var b = FlatBufferBuilder()
@@ -1259,7 +1259,7 @@ def test_adversarial_corrupt_vtable_slot() raises:
     assert_true(raised, "corrupt vtable slot pointing oob must raise")
 
 
-def test_adversarial_self_referential_offset() raises:
+fn test_adversarial_self_referential_offset() raises:
     # A UOffset that points exactly back to itself forms a logical cycle.
     # The reader must not hang — it just returns a new (possibly invalid) position.
     var b = FlatBufferBuilder()
@@ -1295,7 +1295,7 @@ def test_adversarial_self_referential_offset() raises:
 # ============================================================================
 
 
-def test_create_vector_structs_16byte() raises:
+fn test_create_vector_structs_16byte() raises:
     # Simulate two FieldNode-like structs: each 16 bytes = [i64 length][i64 null_count]
     # struct0: length=100, null_count=5
     # struct1: length=200, null_count=0
@@ -1337,7 +1337,7 @@ def test_create_vector_structs_16byte() raises:
     assert_true(nc1  == Int64(0),   "struct1 null_count: " + String(nc1))
 
 
-def test_create_vector_structs_empty() raises:
+fn test_create_vector_structs_empty() raises:
     # Zero-element struct vector — count must be 0, no bytes.
     var data = List[UInt8]()
     var b = FlatBufferBuilder(32)
@@ -1354,7 +1354,7 @@ def test_create_vector_structs_empty() raises:
     assert_eq_u32(r.vector_len(vec_pos), UInt32(0), "empty struct vec count")
 
 
-def test_vec_struct_bytes_oob() raises:
+fn test_vec_struct_bytes_oob() raises:
     # Accessing index >= count must raise.
     var data = List[UInt8]()
     for _ in range(16):
@@ -1387,7 +1387,7 @@ def run_test(
     name: String,
     mut passed: Int,
     mut failed: Int,
-    test_fn: def () raises -> None,
+    test_fn: fn () raises -> None,
 ):
     try:
         test_fn()
