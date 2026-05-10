@@ -10,4 +10,4 @@ bench-flatbuffers = "mojo run bench_flatbuffers.mojo"
 format = "mblack flatbuffers.mojo test_flatbuffers.mojo"
 
 [dependencies]
-mojo = ">=0.26.2"
+mojo = ">=1.0.0b1"

@@ -7,7 +7,7 @@ from std.time import perf_counter_ns
 # ---------------------------------------------------------------------------
 
 
-fn bench(name: String, iters: Int, ns: UInt):
+def bench(name: String, iters: Int, ns: UInt):
     var per_op = ns // UInt(iters)
     print(name + ": " + String(per_op) + " ns/op  (" + String(iters) + " iters, " + String(ns) + " ns total)")
 
@@ -17,7 +17,7 @@ fn bench(name: String, iters: Int, ns: UInt):
 # ---------------------------------------------------------------------------
 
 
-fn bench_build_scalar_table() raises:
+def bench_build_scalar_table() raises:
     """Build a 3-field table: i32 + f64 + u32 (no heap allocations)."""
     var ITERS = 100_000
     var t0 = perf_counter_ns()
@@ -33,7 +33,7 @@ fn bench_build_scalar_table() raises:
     bench("build_scalar_table", ITERS, t1 - t0)
 
 
-fn bench_build_string_table() raises:
+def bench_build_string_table() raises:
     """Build a table with one string field."""
     var ITERS = 100_000
     var t0 = perf_counter_ns()
@@ -48,7 +48,7 @@ fn bench_build_string_table() raises:
     bench("build_string_table", ITERS, t1 - t0)
 
 
-fn bench_build_vector_u32() raises:
+def bench_build_vector_u32() raises:
     """Build a table with a vector of 16 u32 values."""
     var ITERS = 50_000
     var data = List[UInt32]()
@@ -66,7 +66,7 @@ fn bench_build_vector_u32() raises:
     bench("build_vector_u32[16]", ITERS, t1 - t0)
 
 
-fn bench_build_nested_tables() raises:
+def bench_build_nested_tables() raises:
     """Build 3-level nested tables."""
     var ITERS = 50_000
     var t0 = perf_counter_ns()
@@ -88,7 +88,7 @@ fn bench_build_nested_tables() raises:
     bench("build_nested_3level", ITERS, t1 - t0)
 
 
-fn bench_read_scalar_table() raises:
+def bench_read_scalar_table() raises:
     """Read 3 scalar fields from a pre-built buffer."""
     var ITERS = 200_000
     var b = FlatBufferBuilder(128)
@@ -109,7 +109,7 @@ fn bench_read_scalar_table() raises:
     bench("read_scalar_table[3 fields]", ITERS, t1 - t0)
 
 
-fn bench_read_string_field() raises:
+def bench_read_string_field() raises:
     """Read a single string field."""
     var ITERS = 100_000
     var b = FlatBufferBuilder(128)
@@ -127,7 +127,7 @@ fn bench_read_string_field() raises:
     bench("read_string_field", ITERS, t1 - t0)
 
 
-fn bench_read_vector_u32() raises:
+def bench_read_vector_u32() raises:
     """Read all 16 elements of a u32 vector."""
     var ITERS = 100_000
     var data = List[UInt32]()
@@ -151,7 +151,7 @@ fn bench_read_vector_u32() raises:
     bench("read_vector_u32[16]", ITERS, t1 - t0)
 
 
-fn bench_vtable_dedup() raises:
+def bench_vtable_dedup() raises:
     """Build 100 tables with the same 2-field schema — all deduplicate."""
     var ITERS = 1_000
     var t0 = perf_counter_ns()
@@ -172,7 +172,7 @@ fn bench_vtable_dedup() raises:
     bench("build_100_dedup_tables", ITERS, t1 - t0)
 
 
-fn main() raises:
+def main() raises:
     print("=== flatbuffers benchmarks ===\n")
     bench_build_scalar_table()
     bench_build_string_table()
