@@ -1281,11 +1281,10 @@ def test_adversarial_self_referential_offset() raises:
     # Important: it must NOT loop infinitely.
     var r = FlatBuffersReader(buf)
     var tp = r.root()
-    var raised = False
     try:
         _ = r.read_string(tp, 0)  # may raise or succeed — must not hang
     except:
-        raised = True
+        pass
     # Pass regardless of raise/no-raise: the key is it terminates.
     assert_true(True, "self-referential offset must terminate")
 

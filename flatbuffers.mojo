@@ -20,7 +20,7 @@
 #
 # ============================================================================
 
-from std.memory.unsafe_pointer import alloc
+from std.memory import bitcast
 
 # ============================================================================
 # Offset type constants (FlatBuffers spec §2)
@@ -85,18 +85,12 @@ def write_u64_le(mut buf: List[UInt8], pos: Int, val: UInt64):
 
 
 def write_f32_le(mut buf: List[UInt8], pos: Int, val: Float32):
-    var tmp = alloc[Float32](1)
-    tmp[] = val
-    var u = tmp.bitcast[UInt32]()[]
-    tmp.free()
+    var u = bitcast[DType.uint32](val)
     write_u32_le(buf, pos, u)
 
 
 def write_f64_le(mut buf: List[UInt8], pos: Int, val: Float64):
-    var tmp = alloc[Float64](1)
-    tmp[] = val
-    var u = tmp.bitcast[UInt64]()[]
-    tmp.free()
+    var u = bitcast[DType.uint64](val)
     write_u64_le(buf, pos, u)
 
 
@@ -131,20 +125,12 @@ def read_u32_le(buf: List[UInt8], pos: Int) raises -> UInt32:
 
 def read_i32_le(buf: List[UInt8], pos: Int) raises -> Int32:
     var u = read_u32_le(buf, pos)
-    var tmp = alloc[UInt32](1)
-    tmp[] = u
-    var result = tmp.bitcast[Int32]()[]
-    tmp.free()
-    return result
+    return bitcast[DType.int32](u)
 
 
 def read_i64_le(buf: List[UInt8], pos: Int) raises -> Int64:
     var u = read_u64_le(buf, pos)
-    var tmp = alloc[UInt64](1)
-    tmp[] = u
-    var result = tmp.bitcast[Int64]()[]
-    tmp.free()
-    return result
+    return bitcast[DType.int64](u)
 
 
 def read_u64_le(buf: List[UInt8], pos: Int) raises -> UInt64:
@@ -162,20 +148,12 @@ def read_u64_le(buf: List[UInt8], pos: Int) raises -> UInt64:
 
 def read_f32_le(buf: List[UInt8], pos: Int) raises -> Float32:
     var u = read_u32_le(buf, pos)
-    var tmp = alloc[UInt32](1)
-    tmp[] = u
-    var result = tmp.bitcast[Float32]()[]
-    tmp.free()
-    return result
+    return bitcast[DType.float32](u)
 
 
 def read_f64_le(buf: List[UInt8], pos: Int) raises -> Float64:
     var u = read_u64_le(buf, pos)
-    var tmp = alloc[UInt64](1)
-    tmp[] = u
-    var result = tmp.bitcast[Float64]()[]
-    tmp.free()
-    return result
+    return bitcast[DType.float64](u)
 
 
 # ============================================================================
@@ -205,9 +183,9 @@ struct FieldLoc(Copyable, Movable):
         self.slot = copy.slot
         self.offset = copy.offset
 
-    def __init__(out self, *, deinit take: Self):
-        self.slot = take.slot
-        self.offset = take.offset
+    def __init__(out self, *, deinit move: Self):
+        self.slot = move.slot
+        self.offset = move.offset
 
 
 # ============================================================================
@@ -240,14 +218,14 @@ struct FlatBufferBuilder(Movable):
         self._in_table   = False
         self._field_locs = List[FieldLoc]()
 
-    def __init__(out self, *, deinit take: Self):
-        self._buf        = take._buf^
-        self._head       = take._head
-        self._min_align  = take._min_align
-        self._vtables    = take._vtables^
-        self._table_start = take._table_start
-        self._in_table   = take._in_table
-        self._field_locs = take._field_locs^
+    def __init__(out self, *, deinit move: Self):
+        self._buf        = move._buf^
+        self._head       = move._head
+        self._min_align  = move._min_align
+        self._vtables    = move._vtables^
+        self._table_start = move._table_start
+        self._in_table   = move._in_table
+        self._field_locs = move._field_locs^
 
     # ------------------------------------------------------------------
     # Internal: grow buffer by doubling, shift written bytes to end
@@ -685,8 +663,8 @@ struct FlatBuffersReader(Movable):
     def __init__(out self, buf: List[UInt8]):
         self._buf = buf.copy()
 
-    def __init__(out self, *, deinit take: Self):
-        self._buf = take._buf^
+    def __init__(out self, *, deinit move: Self):
+        self._buf = move._buf^
 
     # ------------------------------------------------------------------
     # Root: position 0 holds the root UOffset (absolute table position)
@@ -734,11 +712,7 @@ struct FlatBuffersReader(Movable):
         if voff == 0:
             return default
         var u = read_u8(self._buf, Int(tp) + Int(voff))
-        var tmp = alloc[UInt8](1)
-        tmp[] = u
-        var result = tmp.bitcast[Int8]()[]
-        tmp.free()
-        return result
+        return bitcast[DType.int8](u)
 
     def read_u8(self, tp: UInt32, slot: Int, default: UInt8 = 0) raises -> UInt8:
         var voff = self._field_voffset(tp, slot)
@@ -751,11 +725,7 @@ struct FlatBuffersReader(Movable):
         if voff == 0:
             return default
         var u = read_u16_le(self._buf, Int(tp) + Int(voff))
-        var tmp = alloc[UInt16](1)
-        tmp[] = u
-        var result = tmp.bitcast[Int16]()[]
-        tmp.free()
-        return result
+        return bitcast[DType.int16](u)
 
     def read_u16(self, tp: UInt32, slot: Int, default: UInt16 = 0) raises -> UInt16:
         var voff = self._field_voffset(tp, slot)

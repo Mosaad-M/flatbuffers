@@ -7,8 +7,8 @@ from std.time import perf_counter_ns
 # ---------------------------------------------------------------------------
 
 
-def bench(name: String, iters: Int, ns: UInt):
-    var per_op = ns // UInt(iters)
+def bench(name: String, iters: Int, ns: Int):
+    var per_op = ns // iters
     print(name + ": " + String(per_op) + " ns/op  (" + String(iters) + " iters, " + String(ns) + " ns total)")
 
 
