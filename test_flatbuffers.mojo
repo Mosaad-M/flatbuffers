@@ -422,11 +422,48 @@ def test_table_one_i32_field() raises:
         | (Int32(b._buf[table_abs + 1]) << 8)
         | (Int32(b._buf[table_abs + 2]) << 16)
         | (Int32(b._buf[table_abs + 3]) << 24))
-    var vtable_abs = table_abs + Int(soffset)
+    var vtable_abs = table_abs - Int(soffset)
     assert_true(vtable_abs >= 0, "vtable at valid position")
     # vtable slot 0 should be nonzero (field is present)
     var slot0 = UInt16(b._buf[vtable_abs + 4]) | (UInt16(b._buf[vtable_abs + 5]) << 8)
     assert_true(Int(slot0) > 0, "slot 0 nonzero")
+
+
+def test_soffset_matches_external_wire_format() raises:
+    """Regression test for a real bug: this package's writer/reader used to
+    agree with EACH OTHER on an inverted soffset sign convention
+    (vtable_pos = table_pos + soffset, with soffset stored negative), which
+    made every self-roundtrip test pass while producing files real Arrow/
+    pyarrow rejected outright ("Verification of flatbuffer-encoded Footer
+    failed"). The actual FlatBuffers wire format requires soffset to be
+    POSITIVE, with vtable_pos = table_pos - soffset (verified directly
+    against a real pyarrow-written .feather file's footer bytes). This test
+    pins that external invariant directly, not just internal self-
+    consistency, so a regression back to the inverted convention fails here
+    even if every other (self-referential) test in this file still passes.
+    """
+    var b = FlatBufferBuilder()
+    b.start_table()
+    b.add_field_i32(0, Int32(42))
+    var toff = b.end_table()
+    var buf = b.finish(toff)
+
+    var root = Int(read_u32_le(buf, 0))
+    var soffset = read_i32_le(buf, root)
+    # The actual bug: this used to be negative. A vtable is always written
+    # before (at a lower absolute address than) the table that references
+    # it, so a spec-correct soffset for a real table is always positive.
+    assert_true(Int(soffset) > 0, "soffset must be positive per the external FlatBuffers wire format")
+
+    var vt_abs = root - Int(soffset)
+    assert_true(vt_abs >= 0 and vt_abs < root, "vtable_pos = table_pos - soffset must land before the table")
+    var vt_size = Int(read_u16_le(buf, vt_abs))
+    assert_true(vt_size >= 6, "vtable has header + one slot")
+
+    # Cross-check this matches FlatBuffersReader's own resolution.
+    var r = FlatBuffersReader(buf)
+    var r_root = r.root()
+    assert_eq_int(Int(r_root), root, "reader root matches manual root")
 
 
 def test_table_field_absent() raises:
@@ -440,7 +477,7 @@ def test_table_field_absent() raises:
         | (Int32(b._buf[table_abs + 1]) << 8)
         | (Int32(b._buf[table_abs + 2]) << 16)
         | (Int32(b._buf[table_abs + 3]) << 24))
-    var vtable_abs = table_abs + Int(soffset)
+    var vtable_abs = table_abs - Int(soffset)
     var vtable_size = UInt16(b._buf[vtable_abs]) | (UInt16(b._buf[vtable_abs + 1]) << 8)
     # vtable has 1 slot (only slot 0 was added): 4 + 2*1 = 6 bytes
     assert_eq_u16(vtable_size, UInt16(6), "vtable size")
@@ -481,7 +518,7 @@ def test_finish_root_offset() raises:
     assert_true(root > 0 and root < len(buf), "root within buffer")
     # soffset at root must point to a valid vtable position
     var soff = Int32(buf[root]) | (Int32(buf[root+1]) << 8) | (Int32(buf[root+2]) << 16) | (Int32(buf[root+3]) << 24)
-    var vt_abs = root + Int(soff)
+    var vt_abs = root - Int(soff)
     assert_true(vt_abs >= 0 and vt_abs < len(buf), "vtable within buffer")
     # vtable_size at vtable must be >= 4 (minimum: just the 4-byte header)
     var vt_size = Int(UInt16(buf[vt_abs]) | (UInt16(buf[vt_abs + 1]) << 8))
@@ -499,7 +536,7 @@ def test_table_with_string_field() raises:
     var root = Int(UInt32(buf[0]) | (UInt32(buf[1]) << 8) | (UInt32(buf[2]) << 16) | (UInt32(buf[3]) << 24))
     # soffset at root
     var so = Int32(buf[root]) | (Int32(buf[root + 1]) << 8) | (Int32(buf[root + 2]) << 16) | (Int32(buf[root + 3]) << 24)
-    var vt_abs = root + Int(so)
+    var vt_abs = root - Int(so)
     # slot 0 voffset
     var slot0 = Int(UInt16(buf[vt_abs + 4]) | (UInt16(buf[vt_abs + 5]) << 8))
     assert_true(slot0 > 0, "slot0 present")
@@ -529,14 +566,14 @@ def test_nested_table() raises:
     # Navigate: root → outer table → inner table → field = 99
     var root = Int(UInt32(buf[0]) | (UInt32(buf[1]) << 8) | (UInt32(buf[2]) << 16) | (UInt32(buf[3]) << 24))
     var so = Int32(buf[root]) | (Int32(buf[root+1]) << 8) | (Int32(buf[root+2]) << 16) | (Int32(buf[root+3]) << 24)
-    var vt = root + Int(so)
+    var vt = root - Int(so)
     var slot0 = Int(UInt16(buf[vt + 4]) | (UInt16(buf[vt + 5]) << 8))
     var ref_pos = root + slot0
     var inner_rel = Int(UInt32(buf[ref_pos]) | (UInt32(buf[ref_pos+1]) << 8) | (UInt32(buf[ref_pos+2]) << 16) | (UInt32(buf[ref_pos+3]) << 24))
     var inner_abs = ref_pos + inner_rel
     # Now read inner table field 0
     var iso = Int32(buf[inner_abs]) | (Int32(buf[inner_abs+1]) << 8) | (Int32(buf[inner_abs+2]) << 16) | (Int32(buf[inner_abs+3]) << 24)
-    var ivt = inner_abs + Int(iso)
+    var ivt = inner_abs - Int(iso)
     var islot0 = Int(UInt16(buf[ivt + 4]) | (UInt16(buf[ivt + 5]) << 8))
     var ival_pos = inner_abs + islot0
     var ival = Int32(buf[ival_pos]) | (Int32(buf[ival_pos+1]) << 8) | (Int32(buf[ival_pos+2]) << 16) | (Int32(buf[ival_pos+3]) << 24)
@@ -1428,6 +1465,7 @@ def main() raises:
     run_test[test_create_vector_u32_alignment]("test_create_vector_u32_alignment", passed, failed)
     run_test[test_start_end_table_empty]("test_start_end_table_empty", passed, failed)
     run_test[test_table_one_i32_field]("test_table_one_i32_field", passed, failed)
+    run_test[test_soffset_matches_external_wire_format]("test_soffset_matches_external_wire_format", passed, failed)
     run_test[test_table_field_absent]("test_table_field_absent", passed, failed)
     run_test[test_vtable_deduplication]("test_vtable_deduplication", passed, failed)
     run_test[test_finish_root_offset]("test_finish_root_offset", passed, failed)

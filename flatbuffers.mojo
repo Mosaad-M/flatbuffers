@@ -598,12 +598,16 @@ struct FlatBufferBuilder(Movable):
 
         if match_vt_pos >= 0:
             # Reuse existing vtable: patch soffset
-            # soffset at table_pos points to vtable: vtable_abs = table_abs + soffset
-            # table_abs = buf_tail - table_pos
-            # vtable_abs = buf_tail - match_vt_pos
-            # soffset = vtable_abs - table_abs = (buf_tail - match_vt_pos) - (buf_tail - table_pos)
-            #         = table_pos - match_vt_pos
-            var soffset = Int32(Int(table_pos) - match_vt_pos)
+            # Per the FlatBuffers wire format, soffset is read by the CONSUMER
+            # as vtable_abs = table_abs - soffset (subtraction, not addition —
+            # this is the actual external spec, verified against a real
+            # Arrow/pyarrow-generated file, not just this package's own
+            # round-trip). table_abs = buf_tail - table_pos;
+            # vtable_abs = buf_tail - match_vt_pos, so:
+            #   soffset = table_abs - vtable_abs
+            #           = (buf_tail - table_pos) - (buf_tail - match_vt_pos)
+            #           = match_vt_pos - table_pos
+            var soffset = Int32(match_vt_pos - Int(table_pos))
             var table_abs = buf_tail - Int(table_pos)
             write_i32_le(self._buf, table_abs, soffset)
         else:
@@ -617,10 +621,14 @@ struct FlatBufferBuilder(Movable):
             write_u16_le(self._buf, self._head, vtable_size)
             var new_vt_offset = self.offset()
             self._vtables.append(new_vt_offset)
-            # Patch soffset: vtable_abs = buf_tail - new_vt_offset
-            # soffset = vtable_abs - table_abs = (buf_tail - new_vt_offset) - (buf_tail - table_pos)
-            #         = table_pos - new_vt_offset
-            var soffset = Int32(Int(table_pos) - Int(new_vt_offset))
+            # Patch soffset: vtable_abs = buf_tail - new_vt_offset,
+            # table_abs = buf_tail - table_pos, and per the wire format
+            # (vtable_abs = table_abs - soffset, verified against a real
+            # Arrow/pyarrow-generated file):
+            #   soffset = table_abs - vtable_abs
+            #           = (buf_tail - table_pos) - (buf_tail - new_vt_offset)
+            #           = new_vt_offset - table_pos
+            var soffset = Int32(Int(new_vt_offset) - Int(table_pos))
             var table_abs = len(self._buf) - Int(table_pos)
             write_i32_le(self._buf, table_abs, soffset)
 
@@ -675,12 +683,17 @@ struct FlatBuffersReader(Movable):
 
     # ------------------------------------------------------------------
     # Internal: vtable position for a given table
-    # soffset at tp is negative; vtable_pos = tp + soffset < tp
+    # Per the FlatBuffers wire format, soffset is POSITIVE and
+    # vtable_pos = tp - soffset < tp (verified against a real
+    # Arrow/pyarrow-generated file, not just this package's own
+    # round-trip -- a prior version of this code used tp + soffset with a
+    # negative soffset, which was self-consistent with this package's own
+    # writer but incompatible with the real external format).
     # ------------------------------------------------------------------
 
     def _vtable_pos(self, table_pos: UInt32) raises -> Int:
         var soffset = read_i32_le(self._buf, Int(table_pos))
-        var vt_pos = Int(table_pos) + Int(soffset)
+        var vt_pos = Int(table_pos) - Int(soffset)
         if vt_pos < 0 or vt_pos >= len(self._buf):
             raise Error("flatbuffers: vtable position out of bounds: " + String(vt_pos))
         return vt_pos
