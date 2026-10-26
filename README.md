@@ -18,6 +18,9 @@ pixi add flatbuffers  # via mojo-pkg-index
 
 Or copy `flatbuffers.mojo` directly into your project.
 
+Requires Mojo `>= 1.2.0`. CI runs the tests on Mojo 1.2.0 and on the newest Mojo release.
+For Mojo 1.0 / 1.1, use flatbuffers 1.1.1.
+
 ## Usage
 
 ### Writing
