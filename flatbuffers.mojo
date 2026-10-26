@@ -799,7 +799,7 @@ struct FlatBuffersReader(Movable):
         var bytes = List[UInt8](capacity=length)
         for i in range(length):
             bytes.append(self._buf[str_pos + 4 + i])
-        return String(unsafe_from_utf8=bytes^)
+        return String(unsafe_from_utf8=bytes)
 
     # ------------------------------------------------------------------
     # Offset reader — raises if field absent; returns absolute position
@@ -898,7 +898,7 @@ struct FlatBuffersReader(Movable):
         var bytes = List[UInt8](capacity=length)
         for i in range(length):
             bytes.append(self._buf[Int(str_pos) + 4 + i])
-        return String(unsafe_from_utf8=bytes^)
+        return String(unsafe_from_utf8=bytes)
 
     def vec_string(self, vec_pos: UInt32, i: UInt32) raises -> String:
         return self.read_string_at(self.vec_offset(vec_pos, i))
